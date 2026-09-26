@@ -285,6 +285,58 @@ Token obterToken(void) {
     }
 }
 
+// ===========================================================
+// PARTE 2: ANALISADOR SINTATICO
+// ===========================================================
+
+Token lookahead; // o token que o parser esta "olhando" agora
+
+// Avanca para o proximo token
+void nextToken(void) {
+    lookahead = obterToken();
+}
+
+// Mostra erro sintatico e encerra o programa
+void erroSintatico(const char *esperado) {
+    printf("ERRO SINTATICO na linha %d: esperava %s, encontrou '%s'\n",
+           lookahead.line, esperado, lookahead.texto);
+    fprintf(saida, "ERRO SINTATICO na linha %d: esperava %s, encontrou '%s'\n",
+            lookahead.line, esperado, lookahead.texto);
+    fclose(saida);
+    fclose(arquivo);
+    exit(1);
+}
+
+// Confere se o lookahead e do tipo esperado. Se for, avanca. Se nao, erro.
+void match(TokenNome tipo_esperado, const char *nome_esperado) {
+    if (lookahead.type == tipo_esperado) {
+        nextToken();
+    } else {
+        erroSintatico(nome_esperado);
+    }
+}
+
+// Confere se o lookahead e uma palavra reservada especifica (ex: "se", "entao")
+void matchPalavra(const char *palavra_esperada) {
+    if (lookahead.type == TOKEN_KEYWORD && strcmp(lookahead.texto, palavra_esperada) == 0) {
+        nextToken();
+    } else {
+        erroSintatico(palavra_esperada);
+    }
+}
+
+// Confere se o lookahead e um simbolo especifico (ex: "(", ")", ":")
+void matchSimbolo(const char *simbolo_esperado) {
+    if (lookahead.type == TOKEN_SIMBOLO && strcmp(lookahead.texto, simbolo_esperado) == 0) {
+        nextToken();
+    } else {
+        erroSintatico(simbolo_esperado);
+    }
+}
+
+// ===========================================================
+// PARTE 3: PROGRAMA PRINCIPAL
+// ===========================================================
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         printf("Uso: %s <arquivo_fonte>\n", argv[0]);
@@ -306,15 +358,15 @@ int main(int argc, char *argv[]) {
     printf("Arquivo aberto com sucesso!\n");
 
     c_atual = fgetc(arquivo);
+    nextToken(); // pega o primeiro token, para o lookahead ja comecar preenchido
 
-    Token t = obterToken();
-    while (t.type != TOKEN_EOF) {
-        t = obterToken();
+    // TESTE TEMPORARIO: so avanca ate o fim, sem parsear nada ainda
+    while (lookahead.type != TOKEN_EOF) {
+        nextToken();
     }
 
     printf("--- Fim do arquivo ---\n");
 
     fclose(saida);
     fclose(arquivo);
-    return 0;
-}
+    return 0;       
