@@ -1,0 +1,6 @@
+algoritmo "X"
+var
+  a: inteiro
+inicio
+  escreval("oi"
+fimalgoritmo

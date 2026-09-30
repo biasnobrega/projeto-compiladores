@@ -1,0 +1,23 @@
+algoritmo "TesteCompleto"
+procedimento mostrar_erro(mensagem: caractere)
+inicio
+  escreval("[ERRO]: ", mensagem)
+fimprocedimento
+funcao somar(a: inteiro, b: inteiro): inteiro
+inicio
+  retorne a + b
+fimfuncao
+var
+  nomes: vetor[1..3] de caractere
+  i, resultado: inteiro
+  nome: caractere
+inicio
+  nome <- "Ana"
+  nomes[1] <- "João"
+  resultado <- somar(10, 5)
+  escreval("Diferente? ", nome <> "João")
+  para i de 10 ate 0 passo -2 faca
+    escreval(i)
+  fimpara
+  mostrar_erro("A conexão caiu.")
+fimalgoritmo

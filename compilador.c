@@ -1,3 +1,18 @@
+/*
+ * ===========================================================
+ * COMPILADORES - PROJETO Fase 1: Análise Léxica e Sintática
+ * Linguagem: definida nos exemplos do Anexo 1
+ * Implementação em C
+ *
+ * Integrantes do grupo:
+ *   1. Beatriz Silva Nóbrega - 10435789
+ *   2. Felipe Martha
+ *
+ * Compilar:  gcc -Wall -Wno-unused-result -g -Og compilador.c -o compilador
+ * Executar:  ./compilador arquivo_fonte.alg
+ * ===========================================================
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,21 +36,21 @@ typedef enum {
     OP_LE,  // <= (Less or Equal)
     OP_EQ,  // == (Equal)
     OP_GT,  // > (Greater Than)
-    OP_GE   // >= (Greater or Equal)
+    OP_GE  // >= (Greater or Equal)
 } OpRelType;
 
 typedef struct {
     TokenNome type; // Nome do token
     int line;       // Para tratamento de erros
-    
+
     // valor do atributo
     union {
         int table_index;    // índice para Tabela de Símbolos
         int int_value;      // Valor literal convertido
         double float_value; // Valor literal convertido
         OpRelType op_code;  // operador relacional específico
-    } Token;
-} attribute;
+    } attribute;
+} Token;
 
 // ===========================================================
 // VARIÁVEIS GLOBAIS E TABELA DE SÍMBOLOS
@@ -97,8 +112,8 @@ void imprimir_token(int linha, const char *nome_token, const char *atributo_str)
     }
 }
 
-attribute obterToken(void) {
-    attribute token;
+Token obterToken(void) {
+    Token token;
     char lexema[100];
     char atributo_str[100];
     int pos;
@@ -132,12 +147,12 @@ attribute obterToken(void) {
 
             if (eh_palavra_reservada(lexema)) {
                 token.type = TOKEN_KEYWORD;
-                token.Token.table_index = buscar_ou_inserir_simbolo(lexema);
+                token.attribute.table_index = buscar_ou_inserir_simbolo(lexema);
                 imprimir_token(token.line, "TOKEN_KEYWORD", lexema);
             } else {
                 token.type = TOKEN_ID;
-                token.Token.table_index = buscar_ou_inserir_simbolo(lexema);
-                sprintf(atributo_str, "%d", token.Token.table_index);
+                token.attribute.table_index = buscar_ou_inserir_simbolo(lexema);
+                sprintf(atributo_str, "%d", token.attribute.table_index);
                 imprimir_token(token.line, "TOKEN_ID", atributo_str);
             }
             return token;
@@ -169,13 +184,13 @@ attribute obterToken(void) {
             
             if (eh_real) {
                 token.type = TOKEN_NUM_FLOAT;
-                token.Token.float_value = atof(lexema);
-                sprintf(atributo_str, "%.2f", token.Token.float_value);
+                token.attribute.float_value = atof(lexema);
+                sprintf(atributo_str, "%.2f", token.attribute.float_value);
                 imprimir_token(token.line, "TOKEN_NUM_FLOAT", atributo_str);
             } else {
                 token.type = TOKEN_NUM_INT;
-                token.Token.int_value = atoi(lexema);
-                sprintf(atributo_str, "%d", token.Token.int_value);
+                token.attribute.int_value = atoi(lexema);
+                sprintf(atributo_str, "%d", token.attribute.int_value);
                 imprimir_token(token.line, "TOKEN_NUM_INT", atributo_str);
             }
             return token;
@@ -185,20 +200,26 @@ attribute obterToken(void) {
             pos = 0;
             lexema[pos++] = '"';
             c_atual = fgetc(arquivo);
-            while (c_atual != '"' && c_atual != EOF) {
+            while (c_atual != '"' && c_atual != EOF && c_atual != '\n' && pos < 98) {
                 lexema[pos++] = (char) c_atual;
                 c_atual = fgetc(arquivo);
             }
-            if(c_atual == '"') {
-                lexema[pos++] = '"';
-                c_atual = fgetc(arquivo);
+            if (c_atual != '"') {
+                lexema[pos] = '\0';
+                printf("ERRO LÉXICO na linha %d: string sem aspas de fechamento ou muito longa: %s\n", linha_atual, lexema);
+                fprintf(saida, "ERRO LÉXICO na linha %d: string sem aspas de fechamento ou muito longa: %s\n", linha_atual, lexema);
+                fclose(saida);
+                fclose(arquivo);
+                exit(1);
             }
+            lexema[pos++] = '"';
+            c_atual = fgetc(arquivo);
             lexema[pos] = '\0';
             
             token.type = TOKEN_ID; 
             token.line = linha_atual;
-            token.Token.table_index = buscar_ou_inserir_simbolo(lexema);
-            sprintf(atributo_str, "%d", token.Token.table_index);
+            token.attribute.table_index = buscar_ou_inserir_simbolo(lexema);
+            sprintf(atributo_str, "%d", token.attribute.table_index);
             imprimir_token(token.line, "TOKEN_ID (STRING)", atributo_str);
             return token;
         }
@@ -214,7 +235,7 @@ attribute obterToken(void) {
                 ungetc(proximo, arquivo);
                 token.type = TOKEN_KEYWORD;
                 token.line = linha_atual;
-                token.Token.table_index = buscar_ou_inserir_simbolo("/");
+                token.attribute.table_index = buscar_ou_inserir_simbolo("/");
                 imprimir_token(token.line, "TOKEN_KEYWORD", "/");
                 c_atual = fgetc(arquivo);
                 return token;
@@ -226,23 +247,23 @@ attribute obterToken(void) {
             token.line = linha_atual;
             if (proximo == '-') {
                 token.type = TOKEN_KEYWORD;
-                token.Token.table_index = buscar_ou_inserir_simbolo("<-");
+                token.attribute.table_index = buscar_ou_inserir_simbolo("<-");
                 imprimir_token(token.line, "TOKEN_KEYWORD", "<-");
                 c_atual = fgetc(arquivo);
             } else if (proximo == '=') {
                 token.type = TOKEN_OP_REL;
-                token.Token.op_code = OP_LE;
+                token.attribute.op_code = OP_LE;
                 imprimir_token(token.line, "TOKEN_OP_REL", "OP_LE");
                 c_atual = fgetc(arquivo);
             } else if (proximo == '>') {
                 token.type = TOKEN_KEYWORD;
-                token.Token.table_index = buscar_ou_inserir_simbolo("<>");
+                token.attribute.table_index = buscar_ou_inserir_simbolo("<>");
                 imprimir_token(token.line, "TOKEN_KEYWORD", "<>");
                 c_atual = fgetc(arquivo);
             } else {
                 ungetc(proximo, arquivo);
                 token.type = TOKEN_OP_REL;
-                token.Token.op_code = OP_LT;
+                token.attribute.op_code = OP_LT;
                 imprimir_token(token.line, "TOKEN_OP_REL", "OP_LT");
                 c_atual = fgetc(arquivo);
             }
@@ -254,13 +275,13 @@ attribute obterToken(void) {
             token.line = linha_atual;
             if (proximo == '=') {
                 token.type = TOKEN_OP_REL;
-                token.Token.op_code = OP_GE;
+                token.attribute.op_code = OP_GE;
                 imprimir_token(token.line, "TOKEN_OP_REL", "OP_GE");
                 c_atual = fgetc(arquivo);
             } else {
                 ungetc(proximo, arquivo);
                 token.type = TOKEN_OP_REL;
-                token.Token.op_code = OP_GT;
+                token.attribute.op_code = OP_GT;
                 imprimir_token(token.line, "TOKEN_OP_REL", "OP_GT");
                 c_atual = fgetc(arquivo);
             }
@@ -270,9 +291,25 @@ attribute obterToken(void) {
         if (c_atual == '=') {
             token.type = TOKEN_OP_REL;
             token.line = linha_atual;
-            token.Token.op_code = OP_EQ;
+            token.attribute.op_code = OP_EQ;
             imprimir_token(token.line, "TOKEN_OP_REL", "OP_EQ");
             c_atual = fgetc(arquivo);
+            return token;
+        }
+        if (c_atual == '.') {
+            int proximo = fgetc(arquivo);
+            token.type = TOKEN_KEYWORD;
+            token.line = linha_atual;
+            if (proximo == '.') {
+                token.attribute.table_index = buscar_ou_inserir_simbolo("..");
+                imprimir_token(token.line, "TOKEN_KEYWORD", "..");
+                c_atual = fgetc(arquivo);
+            } else {
+                ungetc(proximo, arquivo);
+                token.attribute.table_index = buscar_ou_inserir_simbolo(".");
+                imprimir_token(token.line, "TOKEN_KEYWORD", ".");
+                c_atual = fgetc(arquivo);
+            }
             return token;
         }
 
@@ -281,14 +318,14 @@ attribute obterToken(void) {
             token.type = TOKEN_KEYWORD;
             token.line = linha_atual;
             char simbolo_texto[2] = {(char) c_atual, '\0'};
-            token.Token.table_index = buscar_ou_inserir_simbolo(simbolo_texto);
+            token.attribute.table_index = buscar_ou_inserir_simbolo(simbolo_texto);
             imprimir_token(token.line, "TOKEN_KEYWORD", simbolo_texto);
             c_atual = fgetc(arquivo);
             return token;
         }
 
-        printf("ERRO LEXICO na linha %d: caractere invalido '%c'\n", linha_atual, c_atual);
-        fprintf(saida, "ERRO LEXICO na linha %d: caractere invalido '%c'\n", linha_atual, c_atual);
+        printf("ERRO LÉXICO na linha %d: caractere invalido '%c'\n", linha_atual, c_atual);
+        fprintf(saida, "ERRO LÉXICO na linha %d: caractere invalido '%c'\n", linha_atual, c_atual);
         fclose(saida);
         fclose(arquivo);
         exit(1);
@@ -299,7 +336,7 @@ attribute obterToken(void) {
 // PARTE 2: ANALISADOR SINTÁTICO (PARSER)
 // ===========================================================
 
-attribute lookahead; 
+Token lookahead; 
 
 void nextToken(void) {
     lookahead = obterToken();
@@ -309,13 +346,23 @@ const char* obter_texto_lookahead() {
     if (lookahead.type == TOKEN_EOF) return "EOF";
     if (lookahead.type == TOKEN_NUM_INT || lookahead.type == TOKEN_NUM_FLOAT) return "NUMERO";
     if (lookahead.type == TOKEN_OP_REL) return "OPERADOR_RELACIONAL";
-    return tabela_simbolos[lookahead.Token.table_index];
+    return tabela_simbolos[lookahead.attribute.table_index];
+}
+
+// Uma string e um TOKEN_ID cujo texto comeca com aspas
+int eh_string(void) {
+    return lookahead.type == TOKEN_ID && obter_texto_lookahead()[0] == '"';
+}
+
+// Um identificador e um TOKEN_ID que NAO e string
+int eh_identificador(void) {
+    return lookahead.type == TOKEN_ID && obter_texto_lookahead()[0] != '"';
 }
 
 void erroSintatico(const char *esperado) {
-    printf("ERRO SINTATICO: esperado '%s', encontrado '%s' na linha %d\n", 
+    printf("ERRO SINTÁTICO: esperado '%s', encontrado '%s' na linha %d\n", 
            esperado, obter_texto_lookahead(), lookahead.line);
-    fprintf(saida, "ERRO SINTATICO: esperado '%s', encontrado '%s' na linha %d\n", 
+    fprintf(saida, "ERRO SINTÁTICO: esperado '%s', encontrado '%s' na linha %d\n", 
            esperado, obter_texto_lookahead(), lookahead.line);
     fclose(saida);
     fclose(arquivo);
@@ -323,7 +370,9 @@ void erroSintatico(const char *esperado) {
 }
 
 void match(TokenNome tipo_esperado, const char *msg_erro) {
-    if (lookahead.type == tipo_esperado) {
+    int ok = (tipo_esperado == TOKEN_ID) ? eh_identificador()
+                                         : (lookahead.type == tipo_esperado);
+    if (ok) {
         nextToken();
     } else {
         erroSintatico(msg_erro);
@@ -343,9 +392,17 @@ void parse_comandos();
 void parse_expressao();
 
 void parse_fator() {
+    if (strcmp(obter_texto_lookahead(), "-") == 0 || strcmp(obter_texto_lookahead(), "+") == 0) {
+        nextToken();
+        parse_fator();
+        return;
+    }
+
     if (lookahead.type == TOKEN_NUM_INT || lookahead.type == TOKEN_NUM_FLOAT) {
         nextToken();
-    } else if (lookahead.type == TOKEN_ID) {
+    } else if (eh_string()) {
+        nextToken();
+    } else if (eh_identificador()) {
         nextToken();
         if (strcmp(obter_texto_lookahead(), "[") == 0) {
             match_keyword("[");
@@ -354,6 +411,10 @@ void parse_fator() {
         } else if (strcmp(obter_texto_lookahead(), "(") == 0) {
             match_keyword("(");
             parse_expressao();
+            while (strcmp(obter_texto_lookahead(), ",") == 0) {
+                match_keyword(",");
+                parse_expressao();
+            }
             match_keyword(")");
         }
     } else if (strcmp(obter_texto_lookahead(), "(") == 0) {
@@ -386,7 +447,8 @@ void parse_expressao() {
         parse_termo();
     }
     
-    if (lookahead.type == TOKEN_OP_REL || 
+    if (lookahead.type == TOKEN_OP_REL ||
+        strcmp(obter_texto_lookahead(), "<>") == 0 || 
         strcmp(obter_texto_lookahead(), "E") == 0 || 
         strcmp(obter_texto_lookahead(), "OU") == 0) {
         nextToken();
@@ -394,15 +456,27 @@ void parse_expressao() {
     }
 }
 
-void parse_atribuicao() {
+void parse_comando_id() {
     match(TOKEN_ID, "Identificador");
-    if (strcmp(obter_texto_lookahead(), "[") == 0) {
-        match_keyword("[");
+
+    if (strcmp(obter_texto_lookahead(), "(") == 0) {
+        match_keyword("(");
         parse_expressao();
-        match_keyword("]");
+        while (strcmp(obter_texto_lookahead(), ",") == 0) {
+            match_keyword(",");
+            parse_expressao();
+        }
+        match_keyword(")");
+    } else if (strcmp(obter_texto_lookahead(), "[") == 0 ||
+               strcmp(obter_texto_lookahead(), "<-") == 0) {
+        if (strcmp(obter_texto_lookahead(), "[") == 0) {
+            match_keyword("[");
+            parse_expressao();
+            match_keyword("]");
+        }
+        match_keyword("<-");
+        parse_expressao();
     }
-    match_keyword("<-");
-    parse_expressao();
 }
 
 void parse_comando() {
@@ -470,8 +544,8 @@ void parse_comando() {
         match_keyword("retorne");
         parse_expressao();
     }
-    else if (lookahead.type == TOKEN_ID) {
-        parse_atribuicao();
+    else if (eh_identificador()) {
+        parse_comando_id();
     }
     else {
         erroSintatico("Comando valido (escreva, leia, se, para, enquanto, atribuicao)");
@@ -495,7 +569,7 @@ void parse_secao_var() {
     if (strcmp(obter_texto_lookahead(), "var") == 0) {
         match_keyword("var");
         
-        while (lookahead.type == TOKEN_ID) {
+        while (eh_identificador()) {
             match(TOKEN_ID, "Identificador de Variavel");
             while (strcmp(obter_texto_lookahead(), ",") == 0) {
                 match_keyword(",");
@@ -524,25 +598,58 @@ void parse_secao_var() {
     }
 }
 
+
+void parse_tipo_basico() {
+    const char* tipo = obter_texto_lookahead();
+    if (strcmp(tipo, "inteiro") == 0 || strcmp(tipo, "real") == 0 ||
+        strcmp(tipo, "caractere") == 0 || strcmp(tipo, "logico") == 0) {
+        nextToken();
+    } else {
+        erroSintatico("Tipo valido (inteiro, real, caractere, logico)");
+    }
+}
+
+void parse_parametros() {
+    match_keyword("(");
+    if (strcmp(obter_texto_lookahead(), ")") != 0) {
+        match(TOKEN_ID, "Nome do parametro");
+        match_keyword(":");
+        parse_tipo_basico();
+        while (strcmp(obter_texto_lookahead(), ",") == 0) {
+            match_keyword(",");
+            match(TOKEN_ID, "Nome do parametro");
+            match_keyword(":");
+            parse_tipo_basico();
+        }
+    }
+    match_keyword(")");
+}
+
 void parse_programa() {
     match_keyword("algoritmo");
-    match(TOKEN_ID, "Nome do Algoritmo (String)");
+    if (!eh_string()) {
+        erroSintatico("Nome do Algoritmo (texto entre aspas)");
+    }
+    nextToken();
     
     while (strcmp(obter_texto_lookahead(), "procedimento") == 0 || strcmp(obter_texto_lookahead(), "funcao") == 0) {
         if (strcmp(obter_texto_lookahead(), "procedimento") == 0) {
             match_keyword("procedimento");
             match(TOKEN_ID, "Nome do Procedimento");
+            if (strcmp(obter_texto_lookahead(), "(") == 0) {
+                parse_parametros();
+            }
             match_keyword("inicio");
             parse_comandos();
             match_keyword("fimprocedimento");
         } else {
             match_keyword("funcao");
             match(TOKEN_ID, "Nome da Funcao");
-            match_keyword("(");
-            while (strcmp(obter_texto_lookahead(), ")") != 0) nextToken();
-            match_keyword(")");
+            if (strcmp(obter_texto_lookahead(), "(") == 0) {
+                parse_parametros();
+            }
             match_keyword(":");
-            nextToken(); 
+            parse_tipo_basico(); 
             match_keyword("inicio");
             parse_comandos();
             match_keyword("fimfuncao");
@@ -554,12 +661,20 @@ void parse_programa() {
     match_keyword("inicio");
     parse_comandos();
     match_keyword("fimalgoritmo");
+
+    // Apos o fimalgoritmo nao pode sobrar nada: o proximo token tem que ser o EOF
+    if (lookahead.type != TOKEN_EOF) {
+        erroSintatico("fim do arquivo (EOF)");
+    }
 }
 
 // ===========================================================
 // PARTE 3: PROGRAMA PRINCIPAL
 // ===========================================================
 int main(int argc, char *argv[]) {
+#ifdef _WIN32
+    system("chcp 65001 > nul");
+#endif
     if (argc < 2) {
         printf("Uso: %s <arquivo_fonte>\n", argv[0]);
         return 1;
@@ -580,6 +695,17 @@ int main(int argc, char *argv[]) {
 
     // Inicializa o buffer do analisador
     c_atual = fgetc(arquivo);
+
+    // Ignora o BOM UTF-8 (bytes EF BB BF) que alguns editores gravam no inicio do arquivo
+    if (c_atual == 0xEF) {
+        if (fgetc(arquivo) == 0xBB && fgetc(arquivo) == 0xBF) {
+            c_atual = fgetc(arquivo);
+        } else {
+            rewind(arquivo);
+            c_atual = fgetc(arquivo);
+        }
+    }
+
     nextToken(); 
 
     // Dispara a validação sintática a partir da raiz da gramática
