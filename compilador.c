@@ -6,7 +6,7 @@
  *
  * Integrantes do grupo:
  *   1. Beatriz Silva Nóbrega - 10435789
- *   2. Felipe Martha
+ *   2. Felipe Marques Leite Martha - 10437877
  *
  * Compilar:  gcc -Wall -Wno-unused-result -g -Og compilador.c -o compilador
  * Executar:  ./compilador arquivo_fonte.alg
