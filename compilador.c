@@ -59,6 +59,8 @@ typedef struct {
 char tabela_simbolos[1000][100]; 
 int total_simbolos = 0;
 
+// Procura o texto na tabela de simbolos; se nao existir, insere.
+// Retorna o indice do texto na tabela (usado como atributo do token).
 int buscar_ou_inserir_simbolo(const char *nome) {
     for (int i = 0; i < total_simbolos; i++) {
         if (strcmp(tabela_simbolos[i], nome) == 0) {
@@ -83,7 +85,7 @@ const char *palavras_reservadas[] = {
     "E", "OU", "MOD"
 };
 const int total_palavras_reservadas = 34;
-
+// Retorna 1 se a palavra esta na lista de palavras reservadas, senao 0.
 int eh_palavra_reservada(const char *palavra) {
     for (int i = 0; i < total_palavras_reservadas; i++) {
         if (strcmp(palavra, palavras_reservadas[i]) == 0) {
@@ -101,7 +103,7 @@ int c_atual;
 // ===========================================================
 // PARTE 1: ANALISADOR LÉXICO (SCANNER)
 // ===========================================================
-
+// Imprime o token na tela e em saida.txt no formato: linha# NOME | atributo
 void imprimir_token(int linha, const char *nome_token, const char *atributo_str) {
     if (atributo_str[0] == '\0') {
         printf("%d# %s\n", linha, nome_token);
@@ -111,7 +113,9 @@ void imprimir_token(int linha, const char *nome_token, const char *atributo_str)
         fprintf(saida, "%d# %s | %s\n", linha, nome_token, atributo_str);
     }
 }
-
+// Analisador lexico: le caracteres do arquivo e devolve o proximo token.
+// Ignora espacos, quebras de linha e comentarios.
+// Em caractere invalido mostra ERRO LÉXICO e encerra o programa.
 Token obterToken(void) {
     Token token;
     char lexema[100];
@@ -136,6 +140,7 @@ Token obterToken(void) {
             continue;
         }
 
+        // Identificador ou palavra reservada: letra seguida de letras, digitos ou _
         if (isalpha(c_atual)) {
             pos = 0;
             while (isalpha(c_atual) || isdigit(c_atual) || c_atual == '_') {
@@ -158,6 +163,7 @@ Token obterToken(void) {
             return token;
         }
 
+        // Numero inteiro ou real (digitos, e opcionalmente ponto e digitos)
         if (isdigit(c_atual)) {
             pos = 0;
             int eh_real = 0;
@@ -196,6 +202,7 @@ Token obterToken(void) {
             return token;
         }
 
+        // String entre aspas (em uma unica linha); sem aspas de fechamento gera ERRO LÉXICO
         if (c_atual == '"') {
             pos = 0;
             lexema[pos++] = '"';
@@ -224,6 +231,7 @@ Token obterToken(void) {
             return token;
         }
 
+        // Comentario // (ate o fim da linha) ou operador de divisao
         if (c_atual == '/') {
             int proximo = fgetc(arquivo);
             if (proximo == '/') {
@@ -242,6 +250,7 @@ Token obterToken(void) {
             }
         }
 
+        // Operadores que comecam com <: <- (atribuicao), <=, <> e <
         if (c_atual == '<') {
             int proximo = fgetc(arquivo);
             token.line = linha_atual;
@@ -313,6 +322,7 @@ Token obterToken(void) {
             return token;
         }
 
+        // Simbolos de um caractere: ( ) [ ] , : + - * e barra invertida
         const char *simbolos_validos = "()[],:+-*\\.";
         if (strchr(simbolos_validos, c_atual) != NULL) {
             token.type = TOKEN_KEYWORD;
@@ -337,11 +347,11 @@ Token obterToken(void) {
 // ===========================================================
 
 Token lookahead; 
-
+// Chamada pelo parser: pede ao analisador lexico o proximo token e guarda em lookahead.
 void nextToken(void) {
     lookahead = obterToken();
 }
-
+// Devolve o texto do token atual (lexema na tabela de simbolos) para o parser comparar.
 const char* obter_texto_lookahead() {
     if (lookahead.type == TOKEN_EOF) return "EOF";
     if (lookahead.type == TOKEN_NUM_INT || lookahead.type == TOKEN_NUM_FLOAT) return "NUMERO";
@@ -358,7 +368,7 @@ int eh_string(void) {
 int eh_identificador(void) {
     return lookahead.type == TOKEN_ID && obter_texto_lookahead()[0] != '"';
 }
-
+// Mostra ERRO SINTÁTICO com o que era esperado, o token encontrado e a linha; encerra o programa.
 void erroSintatico(const char *esperado) {
     printf("ERRO SINTÁTICO: esperado '%s', encontrado '%s' na linha %d\n", 
            esperado, obter_texto_lookahead(), lookahead.line);
@@ -368,7 +378,7 @@ void erroSintatico(const char *esperado) {
     fclose(arquivo);
     exit(1);
 }
-
+// Consome o token atual se for do tipo esperado (identificador, numero...); senao erro sintatico.
 void match(TokenNome tipo_esperado, const char *msg_erro) {
     int ok = (tipo_esperado == TOKEN_ID) ? eh_identificador()
                                          : (lookahead.type == tipo_esperado);
@@ -378,7 +388,7 @@ void match(TokenNome tipo_esperado, const char *msg_erro) {
         erroSintatico(msg_erro);
     }
 }
-
+// Consome o token atual se o texto for igual ao esperado (palavra reservada ou simbolo); senao erro sintatico.
 void match_keyword(const char *keyword_esperada) {
     if ((lookahead.type == TOKEN_KEYWORD || lookahead.type == TOKEN_ID) && 
         strcmp(obter_texto_lookahead(), keyword_esperada) == 0) {
@@ -390,7 +400,7 @@ void match_keyword(const char *keyword_esperada) {
 
 void parse_comandos();
 void parse_expressao();
-
+// Fator: sinal + ou -, numero, string, identificador (com indice ou chamada), ( expressao ), verdadeiro ou falso.
 void parse_fator() {
     if (strcmp(obter_texto_lookahead(), "-") == 0 || strcmp(obter_texto_lookahead(), "+") == 0) {
         nextToken();
@@ -427,7 +437,7 @@ void parse_fator() {
         erroSintatico("Fator valido (Numero, Variavel, String ou Expressao)");
     }
 }
-
+// Termo: Fator seguido de operadores * / barra invertida ou MOD (maior precedencia).
 void parse_termo() {
     parse_fator();
     while (strcmp(obter_texto_lookahead(), "*") == 0 || 
@@ -438,7 +448,7 @@ void parse_termo() {
         parse_fator();
     }
 }
-
+// Expressao: Termo com + e -, seguido opcionalmente de operador relacional ou E/OU e outra expressao.
 void parse_expressao() {
     parse_termo();
     while (strcmp(obter_texto_lookahead(), "+") == 0 || 
@@ -455,7 +465,7 @@ void parse_expressao() {
         parse_expressao();
     }
 }
-
+// Comando que comeca com identificador: atribuicao (var <- expr ou vetor[i] <- expr) ou chamada de procedimento.
 void parse_comando_id() {
     match(TOKEN_ID, "Identificador");
 
@@ -478,7 +488,7 @@ void parse_comando_id() {
         parse_expressao();
     }
 }
-
+// Um comando: escreva/escreval, leia, se, enquanto, para, retorne, atribuicao ou chamada.
 void parse_comando() {
     const char* texto_atual = obter_texto_lookahead();
 
@@ -551,7 +561,7 @@ void parse_comando() {
         erroSintatico("Comando valido (escreva, leia, se, para, enquanto, atribuicao)");
     }
 }
-
+// Lista de comandos; para ao encontrar o marcador de fim do bloco (fimse, senao, fimpara, etc.)
 void parse_comandos() {
     while (lookahead.type != TOKEN_EOF && 
            strcmp(obter_texto_lookahead(), "fimalgoritmo") != 0 &&
@@ -564,7 +574,7 @@ void parse_comandos() {
         parse_comando();
     }
 }
-
+// Secao var: declaracoes "ids : tipo" ou "id : vetor[a..b] de tipo"
 void parse_secao_var() {
     if (strcmp(obter_texto_lookahead(), "var") == 0) {
         match_keyword("var");
@@ -598,7 +608,7 @@ void parse_secao_var() {
     }
 }
 
-
+// Aceita um tipo: inteiro, real, caractere ou logico
 void parse_tipo_basico() {
     const char* tipo = obter_texto_lookahead();
     if (strcmp(tipo, "inteiro") == 0 || strcmp(tipo, "real") == 0 ||
@@ -608,7 +618,7 @@ void parse_tipo_basico() {
         erroSintatico("Tipo valido (inteiro, real, caractere, logico)");
     }
 }
-
+// Lista de parametros entre parenteses: nome : tipo, nome : tipo
 void parse_parametros() {
     match_keyword("(");
     if (strcmp(obter_texto_lookahead(), ")") != 0) {
@@ -624,7 +634,7 @@ void parse_parametros() {
     }
     match_keyword(")");
 }
-
+// Regra inicial da gramatica: algoritmo "nome" [procedimentos/funcoes] [var] inicio ... fimalgoritmo.
 void parse_programa() {
     match_keyword("algoritmo");
     if (!eh_string()) {
@@ -671,6 +681,7 @@ void parse_programa() {
 // ===========================================================
 // PARTE 3: PROGRAMA PRINCIPAL
 // ===========================================================
+// Abre o arquivo fonte (nome recebido por linha de comando), cria saida.txt e dispara a analise
 int main(int argc, char *argv[]) {
 #ifdef _WIN32
     system("chcp 65001 > nul");
