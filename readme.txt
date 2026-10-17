@@ -21,7 +21,7 @@ Projeto desenvolvido em C. Compilação (MinGW / VSCode):
 
 Execução (o nome do arquivo fonte é passado por linha de comando):
 
-> .\compilador.exe nome_do_arquivo.txt
+> .\compilador.exe teste_ok.txt
 
 A saída (tokens ou mensagem de erro) aparece na tela e é gravada em
 saida.txt. O programa retorna 0 em caso de sucesso e 1 em caso de erro
@@ -108,10 +108,16 @@ OperadorMult -> * | / | \ | MOD
   símbolos ( ) [ ] , : + - * / \ .. e os operadores <- e <> são
   TOKEN_KEYWORD, com o lexema guardado na tabela de símbolos. O operador <>
   não tem código em OpRelType e é tratado como relacional no parser.
-- Strings são TOKEN_ID cujo lexema começa com aspas (impresso como
-  "TOKEN_ID (STRING)"). O parser diferencia string de identificador.
-- A tabela de símbolos guarda identificadores, palavras reservadas,
-  símbolos e strings. O atributo do token é o índice na tabela.
+- Strings (cadeias de caracteres, como o nome do algoritmo) não são
+  identificadores. Como a Figura 2 não tem um tipo próprio para elas, são
+  TOKEN_KEYWORD cujo lexema começa com aspas. O parser diferencia string de
+  palavra reservada pelas aspas.
+- A tabela de símbolos guarda o texto de identificadores, palavras reservadas,
+  símbolos e strings, porque o parser precisa desse texto.
+- Somente os identificadores (TOKEN_ID) recebem número de ID. O número é uma
+  contagem sequencial (0, 1, 2, ...) na ordem em que cada identificador
+  diferente aparece no fonte, e é o atributo impresso do TOKEN_ID. Palavras
+  reservadas, strings, delimitadores e operadores não consomem número de ID.
 - Erros terminam o programa com retorno 1 e mensagem "ERRO LÉXICO" ou
   "ERRO SINTÁTICO" com a linha. A mensagem também vai para saida.txt.
 - No Windows, o programa ajusta o console para UTF-8 (chcp 65001) para
