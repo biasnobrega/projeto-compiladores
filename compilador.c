@@ -9,7 +9,7 @@
  *   2. Felipe Marques Leite Martha - 10437877
  *
  * Compilar:  gcc -Wall -Wno-unused-result -g -Og compilador.c -o compilador
- * Executar:  ./compilador arquivo_fonte.alg
+ * Executar:  .\compilador.exe teste_ok.txt
  * ===========================================================
  */
 
@@ -56,7 +56,10 @@ typedef struct {
 // VARIÁVEIS GLOBAIS E TABELA DE SÍMBOLOS
 // ===========================================================
 
-char tabela_simbolos[1000][100]; 
+// tabela de simbolos: guarda o TEXTO de tudo que o scanner le (ids, palavras reservadas,
+// strings, delimitadores e operadores). o parser consulta esse texto pra saber o que veio.
+// atencao: o indice daqui NAO e o numero do ID que aparece na saida, isso fica mais embaixo
+char tabela_simbolos[1000][100];
 int total_simbolos = 0;
 
 // Procura o texto na tabela de simbolos; se nao existir, insere.
@@ -70,6 +73,28 @@ int buscar_ou_inserir_simbolo(const char *nome) {
     strcpy(tabela_simbolos[total_simbolos], nome);
     total_simbolos++;
     return total_simbolos - 1;
+}
+
+// --- numeracao dos ids (correcao pedida pela professora) ---
+// o problema: antes a gente imprimia o proprio indice da tabela_simbolos como numero do id.
+// so que a tabela tambem guardava palavras reservadas, strings, delimitadores e operadores,
+// entao o primeiro id da saida podia aparecer como 3, 7, 43... e nao seguia contagem sequencial.
+// a solucao: so quem e TOKEN_ID ganha numero de id, e esse numero e uma contagem propria
+// (0, 1, 2, ...) na ordem em que cada id diferente aparece no fonte.
+// o resto continua na tabela_simbolos so pro parser ler o texto, mas nao gasta numero.
+int numero_id[1000];   // numero_id[i] = numero de id do simbolo i (so vale se eh_id[i] for 1)
+int eh_id[1000];       // eh_id[i] = 1 se o simbolo i ja virou um id numerado, 0 se ainda nao
+int total_ids = 0;     // quantos ids diferentes ja foram numerados (e o proximo numero livre)
+
+// recebe a posicao do simbolo na tabela_simbolos e devolve o numero de id dele
+int obter_numero_id(int indice_simbolo) {
+    // primeira vez que esse id aparece: ele pega o proximo numero livre e a contagem anda
+    if (!eh_id[indice_simbolo]) {
+        eh_id[indice_simbolo] = 1;
+        numero_id[indice_simbolo] = total_ids++;
+    }
+    // se ja tinha numero, so devolve o mesmo (a mesma variavel sempre sai com o mesmo numero)
+    return numero_id[indice_simbolo];
 }
 
 const char *palavras_reservadas[] = {
@@ -130,19 +155,27 @@ Token obterToken(void) {
             return token;
         }
 
+        // quebra de linha: e AQUI que o contador de linhas aumenta, e so aqui.
+        // cada '\n' lido soma 1 em linha_atual. como os tokens guardam a linha em que
+        // comecam, os erros (lexico e sintatico) mostram a linha certa.
+        // o continue volta pro inicio do while pra ler o proximo caractere sem devolver token
         if (c_atual == '\n') {
             linha_atual++;
             c_atual = fgetc(arquivo);
             continue;
         }
+        // espaco, tab e \r (do windows) nao viram token, so pulamos pro proximo caractere.
+        // lembrando que o scanner le caractere por caractere: o espaco nao serve pra separar
+        // lexema, quem decide onde o token acaba e o proprio padrao dele (ex: letras e digitos)
         if (c_atual == ' ' || c_atual == '\t' || c_atual == '\r') {
             c_atual = fgetc(arquivo);
             continue;
         }
 
-        // Identificador ou palavra reservada: letra seguida de letras, digitos ou _
+        // identificador ou palavra reservada: letra seguida de letras, digitos ou _
         if (isalpha(c_atual)) {
             pos = 0;
+            // vai juntando caractere por caractere ate achar algo que nao faz parte do nome
             while (isalpha(c_atual) || isdigit(c_atual) || c_atual == '_') {
                 lexema[pos++] = (char) c_atual;
                 c_atual = fgetc(arquivo);
@@ -150,14 +183,20 @@ Token obterToken(void) {
             lexema[pos] = '\0';
             token.line = linha_atual;
 
+            // com a palavra inteira montada, primeiro confere se e reservada (se, para, inicio...).
+            // so se nao for e que ela vira identificador
             if (eh_palavra_reservada(lexema)) {
+                // palavra reservada: imprime o proprio texto, nao tem numero de id
                 token.type = TOKEN_KEYWORD;
                 token.attribute.table_index = buscar_ou_inserir_simbolo(lexema);
                 imprimir_token(token.line, "TOKEN_KEYWORD", lexema);
             } else {
+                // identificador de verdade: guarda o texto na tabela (pro parser) e imprime o
+                // numero sequencial dele (0, 1, 2...) vindo de obter_numero_id,
+                // e nao mais o indice da tabela
                 token.type = TOKEN_ID;
                 token.attribute.table_index = buscar_ou_inserir_simbolo(lexema);
-                sprintf(atributo_str, "%d", token.attribute.table_index);
+                sprintf(atributo_str, "%d", obter_numero_id(token.attribute.table_index));
                 imprimir_token(token.line, "TOKEN_ID", atributo_str);
             }
             return token;
@@ -223,11 +262,16 @@ Token obterToken(void) {
             c_atual = fgetc(arquivo);
             lexema[pos] = '\0';
             
-            token.type = TOKEN_ID; 
+            // correcao da professora: string (inclusive o nome do algoritmo) NAO e id, e uma
+            // cadeia de caracteres. antes saia como "TOKEN_ID (STRING)" com um indice qualquer.
+            // a figura 2 so tem 6 tipos de token e nenhum e de string, entao ela sai com o mesmo
+            // tipo dos simbolos (TOKEN_KEYWORD) e o atributo impresso e o proprio texto, aspas
+            // incluidas. nao chama obter_numero_id, entao nao gasta numero de id.
+            // o texto continua indo pra tabela_simbolos porque o parser precisa dele
+            token.type = TOKEN_KEYWORD;
             token.line = linha_atual;
             token.attribute.table_index = buscar_ou_inserir_simbolo(lexema);
-            sprintf(atributo_str, "%d", token.attribute.table_index);
-            imprimir_token(token.line, "TOKEN_ID (STRING)", atributo_str);
+            imprimir_token(token.line, "TOKEN_KEYWORD", lexema);
             return token;
         }
 
@@ -322,7 +366,10 @@ Token obterToken(void) {
             return token;
         }
 
-        // Simbolos de um caractere: ( ) [ ] , : + - * e barra invertida
+        // simbolos de um caractere: ( ) [ ] , : + - * e barra invertida.
+        // delimitadores e operadores tambem nao sao ids: saem como TOKEN_KEYWORD com o proprio
+        // simbolo como atributo (ex: "TOKEN_KEYWORD | ("), sem numero de id e sem gastar contagem.
+        // se o caractere nao estiver nessa lista, cai no erro lexico logo abaixo
         const char *simbolos_validos = "()[],:+-*\\.";
         if (strchr(simbolos_validos, c_atual) != NULL) {
             token.type = TOKEN_KEYWORD;
@@ -346,8 +393,12 @@ Token obterToken(void) {
 // PARTE 2: ANALISADOR SINTÁTICO (PARSER)
 // ===========================================================
 
-Token lookahead; 
-// Chamada pelo parser: pede ao analisador lexico o proximo token e guarda em lookahead.
+// lookahead = o token "da vez": ja foi lido pelo scanner mas o parser ainda nao consumiu.
+// e com ele que o parser decide qual regra da gramatica seguir (analise com 1 token a frente)
+Token lookahead;
+// chamada pelo parser: pede ao analisador lexico o proximo token e guarda em lookahead.
+// e por aqui que scanner e parser andam juntos: o scanner so le o proximo token quando o
+// parser pede, entao nao existe uma etapa separada que le o arquivo todo antes.
 void nextToken(void) {
     lookahead = obterToken();
 }
@@ -359,12 +410,15 @@ const char* obter_texto_lookahead() {
     return tabela_simbolos[lookahead.attribute.table_index];
 }
 
-// Uma string e um TOKEN_ID cujo texto comeca com aspas
+// como a string agora e um TOKEN_KEYWORD, o jeito de diferenciar ela das palavras reservadas
+// e olhar o primeiro caractere do texto: se comeca com aspas, e string.
+// (palavra reservada nunca comeca com aspas, entao nao tem confusao)
 int eh_string(void) {
-    return lookahead.type == TOKEN_ID && obter_texto_lookahead()[0] == '"';
+    return lookahead.type == TOKEN_KEYWORD && obter_texto_lookahead()[0] == '"';
 }
 
-// Um identificador e um TOKEN_ID que NAO e string
+// identificador de verdade: e TOKEN_ID. a checagem do primeiro caractere ficou de sobra
+// agora que string nao e mais TOKEN_ID, mas nao atrapalha em nada
 int eh_identificador(void) {
     return lookahead.type == TOKEN_ID && obter_texto_lookahead()[0] != '"';
 }
@@ -704,7 +758,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Inicializa o buffer do analisador
+    // a compilacao (analise) comeca aqui no main: le o primeiro caractere do arquivo.
+    // c_atual sempre guarda o caractere que o scanner ja leu mas ainda nao usou
     c_atual = fgetc(arquivo);
 
     // Ignora o BOM UTF-8 (bytes EF BB BF) que alguns editores gravam no inicio do arquivo
@@ -717,9 +772,12 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    nextToken(); 
+    // pede o primeiro token pro scanner (vai pro lookahead). sem isso o parser comecaria
+    // sem ter nada pra olhar
+    nextToken();
 
-    // Dispara a validação sintática a partir da raiz da gramática
+    // dispara a validacao sintatica a partir da raiz da gramatica (regra Programa).
+    // dai pra frente o parser vai chamando nextToken, que chama o scanner token por token
     parse_programa();
 
     // Se chegou até aqui sem abortar (exit(1)), está tudo correto
