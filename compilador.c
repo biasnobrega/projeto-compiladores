@@ -120,10 +120,107 @@ int eh_palavra_reservada(const char *palavra) {
     return 0;
 }
 
+// ===========================================================
+// FASE 2: MINITABELA DE SIMBOLOS (lista encadeada de variaveis)
+// ===========================================================
+// cada no guarda uma variavel declarada: nome, endereco e tipo.
+// o endereco e a ordem de declaracao: a 1a variavel tem endereco 0, a 2a tem 1, ...
+// obs: tipo[7] nao cabe "inteiro" (8 bytes com o '\0') nem "caractere",
+// por isso guardamos o tipo abreviado: "int", "real", "char" ou "bool".
+typedef struct _TNo {
+    char ID[16];
+    int endereco;
+    char tipo[7];
+    struct _TNo *prox;
+} TNo;
+
+TNo *tabela_variaveis = NULL; // inicio da lista encadeada
+int proximo_endereco = 0;     // endereco que a proxima variavel vai receber
+
+// converte o nome do tipo da linguagem para a abreviacao que cabe em tipo[7]
+const char *abreviar_tipo(const char *tipo) {
+    if (strcmp(tipo, "inteiro") == 0) return "int";
+    if (strcmp(tipo, "real") == 0) return "real";
+    if (strcmp(tipo, "caractere") == 0) return "char";
+    return "bool"; // logico
+}
+
+// cria um no novo e coloca no FIM da lista (assim a lista fica na ordem de declaracao)
+void inserir_variavel(const char *nome, const char *tipo) {
+    TNo *novo = (TNo *) malloc(sizeof(TNo));
+    if (novo == NULL) {
+        printf("Erro: memoria insuficiente\n");
+        exit(1);
+    }
+    snprintf(novo->ID, sizeof(novo->ID), "%s", nome);
+    snprintf(novo->tipo, sizeof(novo->tipo), "%s", abreviar_tipo(tipo));
+    novo->endereco = proximo_endereco++;
+    novo->prox = NULL;
+
+    if (tabela_variaveis == NULL) {
+        tabela_variaveis = novo;
+    } else {
+        TNo *atual = tabela_variaveis;
+        while (atual->prox != NULL) {
+            atual = atual->prox;
+        }
+        atual->prox = novo;
+    }
+}
+
+// mostra a minitabela na tela e em saida.txt (para conferir se a insercao funcionou)
+void imprimir_tabela_variaveis(FILE *destino) {
+    fprintf(destino, "\nMINITABELA DE SIMBOLOS\n");
+    fprintf(destino, "%-16s %-8s %s\n", "ID", "ENDERECO", "TIPO");
+    for (TNo *atual = tabela_variaveis; atual != NULL; atual = atual->prox) {
+        fprintf(destino, "%-16s %-8d %s\n", atual->ID, atual->endereco, atual->tipo);
+    }
+}
+
+// libera todos os nos da lista no final do programa
+void liberar_tabela_variaveis(void) {
+    TNo *atual = tabela_variaveis;
+    while (atual != NULL) {
+        TNo *proximo = atual->prox;
+        free(atual);
+        atual = proximo;
+    }
+    tabela_variaveis = NULL;
+}
 FILE *saida;
 FILE *arquivo;
 int linha_atual = 1;
 int c_atual;
+
+// ===========================================================
+// FASE 2: ANALISE SEMANTICA
+// ===========================================================
+// mostra ERRO SEMÂNTICO com a linha (na tela e em saida.txt) e encerra o programa
+void erro_semantico(int linha, const char *mensagem, const char *nome) {
+    printf("ERRO SEMÂNTICO na linha %d: %s '%s'\n", linha, mensagem, nome);
+    fprintf(saida, "ERRO SEMÂNTICO na linha %d: %s '%s'\n", linha, mensagem, nome);
+    liberar_tabela_variaveis();
+    fclose(saida);
+    fclose(arquivo);
+    exit(1);
+}
+
+// procura uma variavel pelo nome na minitabela; devolve o no ou NULL se nao achar
+TNo *procurar_variavel(const char *nome) {
+    for (TNo *atual = tabela_variaveis; atual != NULL; atual = atual->prox) {
+        if (strcmp(atual->ID, nome) == 0) {
+            return atual;
+        }
+    }
+    return NULL;
+}
+
+// regra semantica: o nome de variavel deve ser unico (nao pode ser declarado duas vezes)
+void verificar_declaracao_unica(const char *nome, int linha) {
+    if (procurar_variavel(nome) != NULL) {
+        erro_semantico(linha, "variavel ja declarada:", nome);
+    }
+}
 
 // ===========================================================
 // PARTE 1: ANALISADOR LÉXICO (SCANNER)
@@ -633,10 +730,19 @@ void parse_secao_var() {
     if (strcmp(obter_texto_lookahead(), "var") == 0) {
         match_keyword("var");
         
-        while (eh_identificador()) {
+                    while (eh_identificador()) {
+            // guarda os nomes da linha (ex: "i, resultado") porque o tipo so aparece
+            // depois do ':'; quando o tipo for lido, todos sao inseridos na minitabela
+            char nomes[50][16];
+            int qtd_nomes = 0;
+
+            snprintf(nomes[qtd_nomes++], 16, "%s", obter_texto_lookahead());
             match(TOKEN_ID, "Identificador de Variavel");
             while (strcmp(obter_texto_lookahead(), ",") == 0) {
                 match_keyword(",");
+                if (eh_identificador() && qtd_nomes < 50) {
+                    snprintf(nomes[qtd_nomes++], 16, "%s", obter_texto_lookahead());
+                }
                 match(TOKEN_ID, "Identificador de Variavel");
             }
             match_keyword(":");
@@ -654,6 +760,10 @@ void parse_secao_var() {
             const char* tipo = obter_texto_lookahead();
             if (strcmp(tipo, "inteiro") == 0 || strcmp(tipo, "real") == 0 || 
                 strcmp(tipo, "caractere") == 0 || strcmp(tipo, "logico") == 0) {
+                for (int k = 0; k < qtd_nomes; k++) {
+                    verificar_declaracao_unica(nomes[k], lookahead.line);
+                    inserir_variavel(nomes[k], tipo);
+                }
                 nextToken();
             } else {
                 erroSintatico("Tipo de variavel valido (inteiro, real, caractere, logico)");
@@ -783,6 +893,12 @@ int main(int argc, char *argv[]) {
     // Se chegou até aqui sem abortar (exit(1)), está tudo correto
     printf("\nSUCESSO: Analise lexica e sintatica concluidas sem erros!\n");
     fprintf(saida, "\nSUCESSO: Analise lexica e sintatica concluidas sem erros!\n");
+
+    
+    // fase 2: mostra a minitabela montada e depois libera a memoria da lista
+    imprimir_tabela_variaveis(stdout);
+    imprimir_tabela_variaveis(saida);
+    liberar_tabela_variaveis();
 
     fclose(saida);
     fclose(arquivo);

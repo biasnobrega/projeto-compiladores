@@ -1,0 +1,6 @@
+algoritmo "Dup"
+var
+  x, x: inteiro
+inicio
+  x <- 1
+fimalgoritmo
