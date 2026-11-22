@@ -306,10 +306,24 @@ TNo *procurar_variavel(const char *nome) {
     return NULL;
 }
 
-// regra semantica: o nome de variavel deve ser unico (nao pode ser declarado duas vezes)
+// procura uma rotina pelo nome na tabela de rotinas; devolve o no ou NULL se nao achar
+TRotina *procurar_rotina(const char *nome) {
+    for (TRotina *atual = tabela_rotinas; atual != NULL; atual = atual->prox) {
+        if (strcmp(atual->ID, nome) == 0) {
+            return atual;
+        }
+    }
+    return NULL;
+}
+
+// regra semantica: o identificador deve ser unico em todo o codigo. vale para variaveis,
+// parametros e rotinas: nenhum nome pode ser declarado duas vezes
 void verificar_declaracao_unica(const char *nome, int linha) {
     if (procurar_variavel(nome) != NULL) {
         erro_semantico(linha, "variavel ja declarada:", nome);
+    }
+    if (procurar_rotina(nome) != NULL) {
+        erro_semantico(linha, "nome ja usado por uma rotina:", nome);
     }
 }
 
@@ -322,6 +336,16 @@ int busca_tabela_simbolos(const char *atributo_ID, int linha) {
         erro_semantico(linha, "variavel nao declarada:", atributo_ID);
     }
     return variavel->endereco;
+}
+
+// procura a rotina chamada no codigo. se ela nao foi declarada, gera ERRO SEMÂNTICO.
+// devolve o no da rotina (com parametros e retorno) para as verificacoes da chamada
+TRotina *busca_rotina(const char *nome, int linha) {
+    TRotina *rotina = procurar_rotina(nome);
+    if (rotina == NULL) {
+        erro_semantico(linha, "rotina nao declarada:", nome);
+    }
+    return rotina;
 }
 
 // ===========================================================
@@ -674,6 +698,8 @@ void parse_fator() {
         // com "(" e chamada de rotina, que sera verificada em outra etapa
         if (strcmp(obter_texto_lookahead(), "(") != 0) {
             busca_tabela_simbolos(nome, linha);
+        } else {
+            busca_rotina(nome, linha);
         }
         if (strcmp(obter_texto_lookahead(), "[") == 0) {
             match_keyword("[");
@@ -733,6 +759,8 @@ void parse_comando_id() {
     match(TOKEN_ID, "Identificador");
 
     if (strcmp(obter_texto_lookahead(), "(") == 0) {
+        // chamada de rotina com argumentos: a rotina precisa estar declarada
+        busca_rotina(nome, linha);
         match_keyword("(");
         parse_expressao();
         while (strcmp(obter_texto_lookahead(), ",") == 0) {
@@ -742,8 +770,8 @@ void parse_comando_id() {
         match_keyword(")");
     } else if (strcmp(obter_texto_lookahead(), "[") == 0 ||
                strcmp(obter_texto_lookahead(), "<-") == 0) {
-                // atribuicao: a variavel que recebe o valor precisa estar declarada
-                busca_tabela_simbolos(nome, linha); 
+        // atribuicao: a variavel que recebe o valor precisa estar declarada
+        busca_tabela_simbolos(nome, linha);
         if (strcmp(obter_texto_lookahead(), "[") == 0) {
             match_keyword("[");
             parse_expressao();
@@ -751,6 +779,9 @@ void parse_comando_id() {
         }
         match_keyword("<-");
         parse_expressao();
+    } else {
+        // nome sozinho: chamada de procedimento sem argumentos
+        busca_rotina(nome, linha);
     }
 }
 // Um comando: escreva/escreval, leia, se, enquanto, para, retorne, atribuicao ou chamada.
@@ -935,11 +966,13 @@ void parse_programa() {
     }
     nextToken();
     
-    while (strcmp(obter_texto_lookahead(), "procedimento") == 0 || strcmp(obter_texto_lookahead(), "funcao") == 0) {
+        while (strcmp(obter_texto_lookahead(), "procedimento") == 0 || strcmp(obter_texto_lookahead(), "funcao") == 0) {
         if (strcmp(obter_texto_lookahead(), "procedimento") == 0) {
             match_keyword("procedimento");
             const char *nome_procedimento = obter_texto_lookahead();
+            int linha_procedimento = lookahead.line;
             match(TOKEN_ID, "Nome do Procedimento");
+            verificar_declaracao_unica(nome_procedimento, linha_procedimento);
             inserir_rotina(nome_procedimento, 0);
             if (strcmp(obter_texto_lookahead(), "(") == 0) {
                 parse_parametros();
@@ -950,7 +983,9 @@ void parse_programa() {
         } else {
             match_keyword("funcao");
             const char *nome_funcao = obter_texto_lookahead();
+            int linha_funcao = lookahead.line;
             match(TOKEN_ID, "Nome da Funcao");
+            verificar_declaracao_unica(nome_funcao, linha_funcao);
             inserir_rotina(nome_funcao, 1);
             if (strcmp(obter_texto_lookahead(), "(") == 0) {
                 parse_parametros();
