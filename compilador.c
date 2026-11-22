@@ -676,36 +676,93 @@ void match_keyword(const char *keyword_esperada) {
 }
 
 void parse_comandos();
-void parse_expressao();
+const char *parse_expressao();
+
+// ===========================================================
+// FASE 2: VERIFICACAO DE TIPOS NAS EXPRESSOES
+// ===========================================================
+// cada funcao de expressao (fator, termo, soma, relacional, E, OU) agora DEVOLVE o tipo
+// do valor que ela reconheceu. os tipos sao os mesmos da minitabela:
+// "int", "real", "char" e "bool". tipos incompativeis geram ERRO SEMÂNTICO.
+
+// int e real sao os tipos numericos (podem ser misturados em contas)
+int eh_numerico(const char *tipo) {
+    return strcmp(tipo, "int") == 0 || strcmp(tipo, "real") == 0;
+}
+
+// erro padrao de tipos: mostra os dois tipos e o operador onde aconteceu
+void erro_tipos(int linha, const char *tipo1, const char *tipo2, const char *operador) {
+    char mensagem[100];
+    snprintf(mensagem, sizeof(mensagem), "tipos incompativeis (%s e %s) no operador", tipo1, tipo2);
+    erro_semantico(linha, mensagem, operador);
+}
+
+// texto do operador do token atual, para as mensagens de erro.
+// os relacionais (TOKEN_OP_REL) nao ficam na tabela_simbolos, por isso o switch
+const char *texto_operador() {
+    if (lookahead.type == TOKEN_OP_REL) {
+        switch (lookahead.attribute.op_code) {
+            case OP_LT: return "<";
+            case OP_LE: return "<=";
+            case OP_EQ: return "=";
+            case OP_GT: return ">";
+            case OP_GE: return ">=";
+        }
+    }
+    return obter_texto_lookahead();
+}
+
 // Fator: sinal + ou -, numero, string, identificador (com indice ou chamada), ( expressao ), verdadeiro ou falso.
-// Fator: sinal + ou -, numero, string, identificador (com indice ou chamada), ( expressao ), verdadeiro ou falso.
-void parse_fator() {
+// Devolve o tipo do fator.
+const char *parse_fator() {
     if (strcmp(obter_texto_lookahead(), "-") == 0 || strcmp(obter_texto_lookahead(), "+") == 0) {
+        const char *sinal = obter_texto_lookahead();
+        int linha = lookahead.line;
         nextToken();
-        parse_fator();
-        return;
+        const char *tipo = parse_fator();
+        // sinal so faz sentido em numero
+        if (!eh_numerico(tipo)) {
+            char mensagem[100];
+            snprintf(mensagem, sizeof(mensagem), "sinal usado com tipo nao numerico (%s) no operador", tipo);
+            erro_semantico(linha, mensagem, sinal);
+        }
+        return tipo;
     }
 
-    if (lookahead.type == TOKEN_NUM_INT || lookahead.type == TOKEN_NUM_FLOAT) {
+    const char *tipo = "int";
+    if (lookahead.type == TOKEN_NUM_INT) {
         nextToken();
+        tipo = "int";
+    } else if (lookahead.type == TOKEN_NUM_FLOAT) {
+        nextToken();
+        tipo = "real";
     } else if (eh_string()) {
         nextToken();
+        tipo = "char";
     } else if (eh_identificador()) {
         const char *nome = obter_texto_lookahead();
         int linha = lookahead.line;
         nextToken();
-        // sem "(" depois do nome e uso de variavel: ela precisa estar declarada.
-        // com "(" e chamada de rotina, que sera verificada em outra etapa
         if (strcmp(obter_texto_lookahead(), "(") != 0) {
+            // uso de variavel: precisa estar declarada, e o tipo vem da minitabela
             busca_tabela_simbolos(nome, linha);
+            tipo = procurar_variavel(nome)->tipo;
+            if (strcmp(obter_texto_lookahead(), "[") == 0) {
+                match_keyword("[");
+                int linha_indice = lookahead.line;
+                const char *tipo_indice = parse_expressao();
+                match_keyword("]");
+                // o indice do vetor tem que ser inteiro
+                if (strcmp(tipo_indice, "int") != 0) {
+                    char mensagem[100];
+                    snprintf(mensagem, sizeof(mensagem), "indice de vetor nao inteiro (%s) em", tipo_indice);
+                    erro_semantico(linha_indice, mensagem, nome);
+                }
+            }
         } else {
-            busca_rotina(nome, linha);
-        }
-        if (strcmp(obter_texto_lookahead(), "[") == 0) {
-            match_keyword("[");
-            parse_expressao();
-            match_keyword("]");
-        } else if (strcmp(obter_texto_lookahead(), "(") == 0) {
+            // chamada de rotina: precisa estar declarada, e o tipo e o retorno dela
+            TRotina *rotina = busca_rotina(nome, linha);
+            tipo = rotina->tipo_retorno;
             match_keyword("(");
             parse_expressao();
             while (strcmp(obter_texto_lookahead(), ",") == 0) {
@@ -716,41 +773,110 @@ void parse_fator() {
         }
     } else if (strcmp(obter_texto_lookahead(), "(") == 0) {
         match_keyword("(");
-        parse_expressao();
+        tipo = parse_expressao();
         match_keyword(")");
     } else if (strcmp(obter_texto_lookahead(), "verdadeiro") == 0 || strcmp(obter_texto_lookahead(), "falso") == 0) {
         nextToken();
+        tipo = "bool";
     } else {
         erroSintatico("Fator valido (Numero, Variavel, String ou Expressao)");
     }
+    return tipo;
 }
 // Termo: Fator seguido de operadores * / barra invertida ou MOD (maior precedencia).
-void parse_termo() {
-    parse_fator();
+// * e / aceitam int e real; barra invertida (divisao inteira) e MOD so aceitam int.
+const char *parse_termo() {
+    const char *tipo = parse_fator();
     while (strcmp(obter_texto_lookahead(), "*") == 0 || 
            strcmp(obter_texto_lookahead(), "/") == 0 || 
            strcmp(obter_texto_lookahead(), "\\") == 0 ||
            strcmp(obter_texto_lookahead(), "MOD") == 0) {
+        const char *operador = obter_texto_lookahead();
+        int linha = lookahead.line;
         nextToken();
-        parse_fator();
+        const char *tipo_direita = parse_fator();
+
+        if (strcmp(operador, "\\") == 0 || strcmp(operador, "MOD") == 0) {
+            if (strcmp(tipo, "int") != 0 || strcmp(tipo_direita, "int") != 0) {
+                erro_tipos(linha, tipo, tipo_direita, operador);
+            }
+            tipo = "int";
+        } else {
+            if (!eh_numerico(tipo) || !eh_numerico(tipo_direita)) {
+                erro_tipos(linha, tipo, tipo_direita, operador);
+            }
+            // int com int da int; se um dos lados for real, o resultado e real
+            tipo = (strcmp(tipo, "int") == 0 && strcmp(tipo_direita, "int") == 0) ? "int" : "real";
+        }
     }
+    return tipo;
 }
-// Expressao: Termo com + e -, seguido opcionalmente de operador relacional ou E/OU e outra expressao.
-void parse_expressao() {
-    parse_termo();
+// Soma: Termo com + e -. Numeros podem ser somados entre si e caractere + caractere junta os textos.
+const char *parse_soma() {
+    const char *tipo = parse_termo();
     while (strcmp(obter_texto_lookahead(), "+") == 0 || 
            strcmp(obter_texto_lookahead(), "-") == 0) {
+        const char *operador = obter_texto_lookahead();
+        int linha = lookahead.line;
         nextToken();
-        parse_termo();
+        const char *tipo_direita = parse_termo();
+
+        if (eh_numerico(tipo) && eh_numerico(tipo_direita)) {
+            tipo = (strcmp(tipo, "int") == 0 && strcmp(tipo_direita, "int") == 0) ? "int" : "real";
+        } else if (strcmp(operador, "+") == 0 && strcmp(tipo, "char") == 0 &&
+                   strcmp(tipo_direita, "char") == 0) {
+            tipo = "char";
+        } else {
+            erro_tipos(linha, tipo, tipo_direita, operador);
+        }
     }
-    
-    if (lookahead.type == TOKEN_OP_REL ||
-        strcmp(obter_texto_lookahead(), "<>") == 0 || 
-        strcmp(obter_texto_lookahead(), "E") == 0 || 
-        strcmp(obter_texto_lookahead(), "OU") == 0) {
+    return tipo;
+}
+// Relacional: Soma comparada com outra Soma (< <= = > >= <>). O resultado e logico.
+// So compara numero com numero, ou valores do mesmo tipo.
+const char *parse_relacional() {
+    const char *tipo = parse_soma();
+    while (lookahead.type == TOKEN_OP_REL || strcmp(obter_texto_lookahead(), "<>") == 0) {
+        const char *operador = texto_operador();
+        int linha = lookahead.line;
         nextToken();
-        parse_expressao();
+        const char *tipo_direita = parse_soma();
+
+        if (!(eh_numerico(tipo) && eh_numerico(tipo_direita)) && strcmp(tipo, tipo_direita) != 0) {
+            erro_tipos(linha, tipo, tipo_direita, operador);
+        }
+        tipo = "bool";
     }
+    return tipo;
+}
+// Conjuncao: Relacional E Relacional E ... (os dois lados tem que ser logicos)
+const char *parse_expressao_e() {
+    const char *tipo = parse_relacional();
+    while (strcmp(obter_texto_lookahead(), "E") == 0) {
+        int linha = lookahead.line;
+        nextToken();
+        const char *tipo_direita = parse_relacional();
+        if (strcmp(tipo, "bool") != 0 || strcmp(tipo_direita, "bool") != 0) {
+            erro_tipos(linha, tipo, tipo_direita, "E");
+        }
+        tipo = "bool";
+    }
+    return tipo;
+}
+// Expressao: Conjuncao OU Conjuncao OU ... (menor precedencia; os dois lados tem que ser logicos)
+// Ordem de precedencia (da maior para a menor): sinal, * / \ MOD, + -, relacionais, E, OU.
+const char *parse_expressao() {
+    const char *tipo = parse_expressao_e();
+    while (strcmp(obter_texto_lookahead(), "OU") == 0) {
+        int linha = lookahead.line;
+        nextToken();
+        const char *tipo_direita = parse_expressao_e();
+        if (strcmp(tipo, "bool") != 0 || strcmp(tipo_direita, "bool") != 0) {
+            erro_tipos(linha, tipo, tipo_direita, "OU");
+        }
+        tipo = "bool";
+    }
+    return tipo;
 }
 // Comando que comeca com identificador: atribuicao (var <- expr ou vetor[i] <- expr) ou chamada de procedimento.
 void parse_comando_id() {

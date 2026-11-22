@@ -1,0 +1,9 @@
+algoritmo "Tipos"
+var
+  a, b: inteiro
+  x: real
+  nome: caractere
+  ok: logico
+inicio
+  escreval(a + nome)
+fimalgoritmo

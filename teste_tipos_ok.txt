@@ -1,0 +1,12 @@
+algoritmo "Tipos"
+var
+  a, b: inteiro
+  x: real
+  nome: caractere
+  ok: logico
+inicio
+  se (a > 0 E b > 0) entao
+    escreval(a * x + 1, nome + "!", a \ b, a MOD 2)
+  fimse
+  ok <- (a = b) OU (nome <> "x")
+fimalgoritmo
