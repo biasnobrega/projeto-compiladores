@@ -878,6 +878,50 @@ const char *parse_expressao() {
     }
     return tipo;
 }
+// ===========================================================
+// FASE 2: VERIFICACAO DE TIPOS NOS COMANDOS
+// ===========================================================
+// atribuicao: o valor tem que ser do mesmo tipo da variavel.
+// unica excecao: inteiro pode ser guardado em variavel real (o contrario nao)
+void verificar_atribuicao(const char *tipo_variavel, const char *tipo_valor,
+                          const char *nome, int linha) {
+    int compativel = strcmp(tipo_variavel, tipo_valor) == 0 ||
+                     (strcmp(tipo_variavel, "real") == 0 && strcmp(tipo_valor, "int") == 0);
+    if (!compativel) {
+        char mensagem[100];
+        snprintf(mensagem, sizeof(mensagem), "atribuicao incompativel (%s <- %s) na variavel",
+                 tipo_variavel, tipo_valor);
+        erro_semantico(linha, mensagem, nome);
+    }
+}
+
+// indice de vetor (no lado esquerdo do <- ou no leia) tem que ser inteiro
+void verificar_indice(const char *tipo_indice, const char *nome, int linha) {
+    if (strcmp(tipo_indice, "int") != 0) {
+        char mensagem[100];
+        snprintf(mensagem, sizeof(mensagem), "indice de vetor nao inteiro (%s) em", tipo_indice);
+        erro_semantico(linha, mensagem, nome);
+    }
+}
+
+// condicao do se e do enquanto tem que ser logica
+void verificar_condicao(const char *tipo, const char *comando, int linha) {
+    if (strcmp(tipo, "bool") != 0) {
+        char mensagem[100];
+        snprintf(mensagem, sizeof(mensagem), "condicao nao logica (%s) no comando", tipo);
+        erro_semantico(linha, mensagem, comando);
+    }
+}
+
+// valores do para (de, ate, passo) tem que ser inteiros
+void verificar_valor_para(const char *tipo, const char *palavra, int linha) {
+    if (strcmp(tipo, "int") != 0) {
+        char mensagem[100];
+        snprintf(mensagem, sizeof(mensagem), "valor nao inteiro (%s) no para, em", tipo);
+        erro_semantico(linha, mensagem, palavra);
+    }
+}
+
 // Comando que comeca com identificador: atribuicao (var <- expr ou vetor[i] <- expr) ou chamada de procedimento.
 void parse_comando_id() {
     const char *nome = obter_texto_lookahead();
@@ -898,13 +942,18 @@ void parse_comando_id() {
                strcmp(obter_texto_lookahead(), "<-") == 0) {
         // atribuicao: a variavel que recebe o valor precisa estar declarada
         busca_tabela_simbolos(nome, linha);
+        const char *tipo_variavel = procurar_variavel(nome)->tipo;
         if (strcmp(obter_texto_lookahead(), "[") == 0) {
             match_keyword("[");
-            parse_expressao();
+            int linha_indice = lookahead.line;
+            const char *tipo_indice = parse_expressao();
             match_keyword("]");
+            verificar_indice(tipo_indice, nome, linha_indice);
         }
+        int linha_atribuicao = lookahead.line;
         match_keyword("<-");
-        parse_expressao();
+        const char *tipo_valor = parse_expressao();
+        verificar_atribuicao(tipo_variavel, tipo_valor, nome, linha_atribuicao);
     } else {
         // nome sozinho: chamada de procedimento sem argumentos
         busca_rotina(nome, linha);
@@ -933,15 +982,18 @@ void parse_comando() {
         busca_tabela_simbolos(nome_leitura, linha_leitura);
         if (strcmp(obter_texto_lookahead(), "[") == 0) {
             match_keyword("[");
-            parse_expressao();
+            int linha_indice = lookahead.line;
+            const char *tipo_indice = parse_expressao();
             match_keyword("]");
+            verificar_indice(tipo_indice, nome_leitura, linha_indice);
         }
         match_keyword(")");
     }
     else if (strcmp(texto_atual, "se") == 0) {
         match_keyword("se");
         match_keyword("(");
-        parse_expressao();
+        int linha_condicao = lookahead.line;
+        verificar_condicao(parse_expressao(), "se", linha_condicao);
         match_keyword(")");
         match_keyword("entao");
         parse_comandos();
@@ -954,7 +1006,8 @@ void parse_comando() {
     else if (strcmp(texto_atual, "enquanto") == 0) {
         match_keyword("enquanto");
         match_keyword("(");
-        parse_expressao();
+        int linha_condicao = lookahead.line;
+        verificar_condicao(parse_expressao(), "enquanto", linha_condicao);
         match_keyword(")");
         match_keyword("faca");
         parse_comandos();
@@ -966,13 +1019,20 @@ void parse_comando() {
         int linha_controle = lookahead.line;
         match(TOKEN_ID, "Variavel de controle do para");
         busca_tabela_simbolos(nome_controle, linha_controle);
+        // a variavel de controle conta de um em um (ou de passo em passo): tem que ser inteira
+        if (strcmp(procurar_variavel(nome_controle)->tipo, "int") != 0) {
+            erro_semantico(linha_controle, "variavel de controle do para nao e inteira:", nome_controle);
+        }
         match_keyword("de");
-        parse_expressao();
+        int linha_valor = lookahead.line;
+        verificar_valor_para(parse_expressao(), "de", linha_valor);
         match_keyword("ate");
-        parse_expressao();
+        linha_valor = lookahead.line;
+        verificar_valor_para(parse_expressao(), "ate", linha_valor);
         if (strcmp(obter_texto_lookahead(), "passo") == 0) {
             match_keyword("passo");
-            parse_expressao();
+            linha_valor = lookahead.line;
+            verificar_valor_para(parse_expressao(), "passo", linha_valor);
         }
         match_keyword("faca");
         parse_comandos();
