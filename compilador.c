@@ -187,6 +187,96 @@ void liberar_tabela_variaveis(void) {
     }
     tabela_variaveis = NULL;
 }
+
+// ===========================================================
+// FASE 2: TABELA DE ROTINAS (procedimentos e funcoes)
+// ===========================================================
+// a minitabela TNo do enunciado guarda so variaveis. para verificar as chamadas de
+// rotina (numero e tipo dos argumentos, retorno) as rotinas ficam numa lista separada.
+#define MAX_PARAMETROS 10
+
+typedef struct _TRotina {
+    char ID[16];
+    int eh_funcao;                             // 1 = funcao, 0 = procedimento
+    char tipo_retorno[7];                      // so tem sentido para funcao
+    int qtd_parametros;
+    char tipos_parametros[MAX_PARAMETROS][7];  // tipo de cada parametro, na ordem
+    struct _TRotina *prox;
+} TRotina;
+
+TRotina *tabela_rotinas = NULL; // inicio da lista de rotinas
+TRotina *rotina_atual = NULL;   // rotina cujo cabecalho esta sendo lido agora
+
+// cria a rotina no FIM da lista e marca ela como a rotina atual
+void inserir_rotina(const char *nome, int eh_funcao) {
+    TRotina *nova = (TRotina *) malloc(sizeof(TRotina));
+    if (nova == NULL) {
+        printf("Erro: memoria insuficiente\n");
+        exit(1);
+    }
+    snprintf(nova->ID, sizeof(nova->ID), "%s", nome);
+    nova->eh_funcao = eh_funcao;
+    snprintf(nova->tipo_retorno, sizeof(nova->tipo_retorno), "-");
+    nova->qtd_parametros = 0;
+    nova->prox = NULL;
+
+    if (tabela_rotinas == NULL) {
+        tabela_rotinas = nova;
+    } else {
+        TRotina *atual = tabela_rotinas;
+        while (atual->prox != NULL) {
+            atual = atual->prox;
+        }
+        atual->prox = nova;
+    }
+    rotina_atual = nova;
+}
+
+// guarda o tipo de mais um parametro na rotina atual
+void adicionar_parametro_rotina(const char *tipo) {
+    if (rotina_atual != NULL && rotina_atual->qtd_parametros < MAX_PARAMETROS) {
+        snprintf(rotina_atual->tipos_parametros[rotina_atual->qtd_parametros],
+                 sizeof(rotina_atual->tipos_parametros[0]), "%s", abreviar_tipo(tipo));
+        rotina_atual->qtd_parametros++;
+    }
+}
+
+// guarda o tipo de retorno da funcao atual (o que vem depois do ':' no cabecalho)
+void definir_retorno_rotina(const char *tipo) {
+    if (rotina_atual != NULL) {
+        snprintf(rotina_atual->tipo_retorno, sizeof(rotina_atual->tipo_retorno),
+                 "%s", abreviar_tipo(tipo));
+    }
+}
+
+// mostra a tabela de rotinas (para conferir se o registro funcionou)
+void imprimir_tabela_rotinas(FILE *destino) {
+    fprintf(destino, "\nTABELA DE ROTINAS\n");
+    fprintf(destino, "%-16s %-13s %-8s %s\n", "ID", "CATEGORIA", "RETORNO", "PARAMETROS");
+    for (TRotina *atual = tabela_rotinas; atual != NULL; atual = atual->prox) {
+        fprintf(destino, "%-16s %-13s %-8s ", atual->ID,
+                atual->eh_funcao ? "funcao" : "procedimento", atual->tipo_retorno);
+        if (atual->qtd_parametros == 0) {
+            fprintf(destino, "-");
+        }
+        for (int i = 0; i < atual->qtd_parametros; i++) {
+            fprintf(destino, "%s%s", i > 0 ? ", " : "", atual->tipos_parametros[i]);
+        }
+        fprintf(destino, "\n");
+    }
+}
+
+// libera todos os nos da lista de rotinas
+void liberar_tabela_rotinas(void) {
+    TRotina *atual = tabela_rotinas;
+    while (atual != NULL) {
+        TRotina *proxima = atual->prox;
+        free(atual);
+        atual = proxima;
+    }
+    tabela_rotinas = NULL;
+    rotina_atual = NULL;
+}
 FILE *saida;
 FILE *arquivo;
 int linha_atual = 1;
@@ -200,6 +290,7 @@ void erro_semantico(int linha, const char *mensagem, const char *nome) {
     printf("ERRO SEMÂNTICO na linha %d: %s '%s'\n", linha, mensagem, nome);
     fprintf(saida, "ERRO SEMÂNTICO na linha %d: %s '%s'\n", linha, mensagem, nome);
     liberar_tabela_variaveis();
+    liberar_tabela_rotinas();
     fclose(saida);
     fclose(arquivo);
     exit(1);
@@ -220,6 +311,17 @@ void verificar_declaracao_unica(const char *nome, int linha) {
     if (procurar_variavel(nome) != NULL) {
         erro_semantico(linha, "variavel ja declarada:", nome);
     }
+}
+
+// recebe o nome (atributo_ID) do identificador e devolve o endereco da variavel na
+// minitabela. se a variavel nao foi declarada, gera ERRO SEMÂNTICO e encerra.
+// a linha e passada so para a mensagem de erro mostrar onde a variavel foi usada
+int busca_tabela_simbolos(const char *atributo_ID, int linha) {
+    TNo *variavel = procurar_variavel(atributo_ID);
+    if (variavel == NULL) {
+        erro_semantico(linha, "variavel nao declarada:", atributo_ID);
+    }
+    return variavel->endereco;
 }
 
 // ===========================================================
@@ -552,6 +654,7 @@ void match_keyword(const char *keyword_esperada) {
 void parse_comandos();
 void parse_expressao();
 // Fator: sinal + ou -, numero, string, identificador (com indice ou chamada), ( expressao ), verdadeiro ou falso.
+// Fator: sinal + ou -, numero, string, identificador (com indice ou chamada), ( expressao ), verdadeiro ou falso.
 void parse_fator() {
     if (strcmp(obter_texto_lookahead(), "-") == 0 || strcmp(obter_texto_lookahead(), "+") == 0) {
         nextToken();
@@ -564,7 +667,14 @@ void parse_fator() {
     } else if (eh_string()) {
         nextToken();
     } else if (eh_identificador()) {
+        const char *nome = obter_texto_lookahead();
+        int linha = lookahead.line;
         nextToken();
+        // sem "(" depois do nome e uso de variavel: ela precisa estar declarada.
+        // com "(" e chamada de rotina, que sera verificada em outra etapa
+        if (strcmp(obter_texto_lookahead(), "(") != 0) {
+            busca_tabela_simbolos(nome, linha);
+        }
         if (strcmp(obter_texto_lookahead(), "[") == 0) {
             match_keyword("[");
             parse_expressao();
@@ -618,6 +728,8 @@ void parse_expressao() {
 }
 // Comando que comeca com identificador: atribuicao (var <- expr ou vetor[i] <- expr) ou chamada de procedimento.
 void parse_comando_id() {
+    const char *nome = obter_texto_lookahead();
+    int linha = lookahead.line;
     match(TOKEN_ID, "Identificador");
 
     if (strcmp(obter_texto_lookahead(), "(") == 0) {
@@ -630,6 +742,8 @@ void parse_comando_id() {
         match_keyword(")");
     } else if (strcmp(obter_texto_lookahead(), "[") == 0 ||
                strcmp(obter_texto_lookahead(), "<-") == 0) {
+                // atribuicao: a variavel que recebe o valor precisa estar declarada
+                busca_tabela_simbolos(nome, linha); 
         if (strcmp(obter_texto_lookahead(), "[") == 0) {
             match_keyword("[");
             parse_expressao();
@@ -656,7 +770,10 @@ void parse_comando() {
     else if (strcmp(texto_atual, "leia") == 0) {
         match_keyword("leia");
         match_keyword("(");
+        const char *nome_leitura = obter_texto_lookahead();
+        int linha_leitura = lookahead.line;
         match(TOKEN_ID, "Variavel para leitura");
+        busca_tabela_simbolos(nome_leitura, linha_leitura);
         if (strcmp(obter_texto_lookahead(), "[") == 0) {
             match_keyword("[");
             parse_expressao();
@@ -688,7 +805,10 @@ void parse_comando() {
     }
     else if (strcmp(texto_atual, "para") == 0) {
         match_keyword("para");
+        const char *nome_controle = obter_texto_lookahead();
+        int linha_controle = lookahead.line;
         match(TOKEN_ID, "Variavel de controle do para");
+        busca_tabela_simbolos(nome_controle, linha_controle);
         match_keyword("de");
         parse_expressao();
         match_keyword("ate");
@@ -782,18 +902,27 @@ void parse_tipo_basico() {
         erroSintatico("Tipo valido (inteiro, real, caractere, logico)");
     }
 }
+// Um parametro "nome : tipo". O parametro e guardado na minitabela como variavel,
+// para que o corpo da rotina possa usa-lo.
+void parse_parametro() {
+    const char *nome = obter_texto_lookahead();
+    int linha = lookahead.line;
+    match(TOKEN_ID, "Nome do parametro");
+    match_keyword(":");
+    const char *tipo = obter_texto_lookahead();
+    parse_tipo_basico();
+    verificar_declaracao_unica(nome, linha);
+    inserir_variavel(nome, tipo);
+    adicionar_parametro_rotina(tipo);
+}
 // Lista de parametros entre parenteses: nome : tipo, nome : tipo
 void parse_parametros() {
     match_keyword("(");
     if (strcmp(obter_texto_lookahead(), ")") != 0) {
-        match(TOKEN_ID, "Nome do parametro");
-        match_keyword(":");
-        parse_tipo_basico();
+        parse_parametro();
         while (strcmp(obter_texto_lookahead(), ",") == 0) {
             match_keyword(",");
-            match(TOKEN_ID, "Nome do parametro");
-            match_keyword(":");
-            parse_tipo_basico();
+            parse_parametro();
         }
     }
     match_keyword(")");
@@ -809,7 +938,9 @@ void parse_programa() {
     while (strcmp(obter_texto_lookahead(), "procedimento") == 0 || strcmp(obter_texto_lookahead(), "funcao") == 0) {
         if (strcmp(obter_texto_lookahead(), "procedimento") == 0) {
             match_keyword("procedimento");
+            const char *nome_procedimento = obter_texto_lookahead();
             match(TOKEN_ID, "Nome do Procedimento");
+            inserir_rotina(nome_procedimento, 0);
             if (strcmp(obter_texto_lookahead(), "(") == 0) {
                 parse_parametros();
             }
@@ -818,11 +949,14 @@ void parse_programa() {
             match_keyword("fimprocedimento");
         } else {
             match_keyword("funcao");
+            const char *nome_funcao = obter_texto_lookahead();
             match(TOKEN_ID, "Nome da Funcao");
+            inserir_rotina(nome_funcao, 1);
             if (strcmp(obter_texto_lookahead(), "(") == 0) {
                 parse_parametros();
             }
             match_keyword(":");
+            definir_retorno_rotina(obter_texto_lookahead());
             parse_tipo_basico(); 
             match_keyword("inicio");
             parse_comandos();
@@ -899,6 +1033,9 @@ int main(int argc, char *argv[]) {
     imprimir_tabela_variaveis(stdout);
     imprimir_tabela_variaveis(saida);
     liberar_tabela_variaveis();
+    imprimir_tabela_rotinas(stdout);
+    imprimir_tabela_rotinas(saida);
+    liberar_tabela_rotinas();
 
     fclose(saida);
     fclose(arquivo);
