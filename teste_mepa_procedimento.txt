@@ -1,0 +1,17 @@
+algoritmo "Procedimentos"
+procedimento mostrar_soma(x: inteiro, y: inteiro)
+inicio
+  escreval(x + y)
+fimprocedimento
+procedimento separador
+inicio
+  escreval(0)
+fimprocedimento
+var
+  a: inteiro
+inicio
+  leia(a)
+  mostrar_soma(a, 10)
+  separador
+  mostrar_soma(a * 2, a)
+fimalgoritmo

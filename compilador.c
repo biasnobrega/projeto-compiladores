@@ -202,6 +202,8 @@ typedef struct _TRotina {
     char tipo_retorno[7];                      // so tem sentido para funcao
     int qtd_parametros;
     char tipos_parametros[MAX_PARAMETROS][7];  // tipo de cada parametro, na ordem
+    char nomes_parametros[MAX_PARAMETROS][16]; // nome de cada parametro (para o codigo MEPA)
+    int rotulo;                                // rotulo MEPA onde a rotina comeca
     struct _TRotina *prox;
 } TRotina;
 
@@ -233,9 +235,11 @@ void inserir_rotina(const char *nome, int eh_funcao) {
     rotina_atual = nova;
 }
 
-// guarda o tipo de mais um parametro na rotina atual
-void adicionar_parametro_rotina(const char *tipo) {
+// guarda o nome e o tipo de mais um parametro na rotina atual
+void adicionar_parametro_rotina(const char *nome, const char *tipo) {
     if (rotina_atual != NULL && rotina_atual->qtd_parametros < MAX_PARAMETROS) {
+        snprintf(rotina_atual->nomes_parametros[rotina_atual->qtd_parametros],
+                 sizeof(rotina_atual->nomes_parametros[0]), "%s", nome);
         snprintf(rotina_atual->tipos_parametros[rotina_atual->qtd_parametros],
                  sizeof(rotina_atual->tipos_parametros[0]), "%s", abreviar_tipo(tipo));
         rotina_atual->qtd_parametros++;
@@ -454,6 +458,16 @@ int recortar_codigo(int inicio, char destino[][TAM_INSTRUCAO]) {
     }
     total_instrucoes = inicio;
     return quantidade;
+}
+
+// MEPA da chamada de rotina. os argumentos ja estao na pilha (o primeiro embaixo, o ultimo
+// no topo): cada um e guardado no seu parametro, do ultimo para o primeiro, e depois o
+// CHPR desvia para o rotulo da rotina (o RTPR no fim da rotina volta para depois do CHPR)
+void gerar_chamada(TRotina *rotina) {
+    for (int i = rotina->qtd_parametros - 1; i >= 0; i--) {
+        emitir("ARMZ %s", rotina->nomes_parametros[i]);
+    }
+    emitir("CHPR L%d", rotina->rotulo);
 }
 
 // ===========================================================
@@ -1150,6 +1164,7 @@ void parse_comando_id() {
             // nome sozinho: chamada sem argumentos
             verificar_quantidade_argumentos(rotina, 0, linha);
         }
+            gerar_chamada(rotina);
     }
 }
 // Um comando: escreva/escreval, leia, se, enquanto, para, retorne, atribuicao ou chamada.
@@ -1425,7 +1440,7 @@ void parse_parametro() {
     parse_tipo_basico();
     verificar_declaracao_unica(nome, linha);
     inserir_variavel(nome, tipo);
-    adicionar_parametro_rotina(tipo);
+    adicionar_parametro_rotina(nome, tipo);
     // o parametro recebe valor na chamada da rotina
     marcar_atribuicao(nome, linha);
 }
@@ -1442,14 +1457,29 @@ void parse_parametros() {
     match_keyword(")");
 }
 // Regra inicial da gramatica: algoritmo "nome" [procedimentos/funcoes] [var] inicio ... fimalgoritmo.
+// MEPA: o codigo das rotinas vem primeiro, mas a execucao tem que comecar no programa
+// principal. por isso, se houver rotinas, o codigo comeca com um DSVS que pula todas elas:
+//     DSVS L1            pula as rotinas
+//     L2: NADA           entrada da 1a rotina (o CHPR da chamada desvia para ca)
+//     ENPR 1
+//     corpo da rotina
+//     RTPR 1,0           volta para a instrucao depois do CHPR
+//     ...                (as outras rotinas)
+//     L1: NADA           comeco do programa principal
 void parse_programa() {
     match_keyword("algoritmo");
     if (!eh_string()) {
         erroSintatico("Nome do Algoritmo (texto entre aspas)");
     }
     nextToken();
-    
-        while (strcmp(obter_texto_lookahead(), "procedimento") == 0 || strcmp(obter_texto_lookahead(), "funcao") == 0) {
+
+    int rotulo_principal = 0;
+    if (strcmp(obter_texto_lookahead(), "procedimento") == 0 || strcmp(obter_texto_lookahead(), "funcao") == 0) {
+        rotulo_principal = proximo_rotulo();
+        emitir("DSVS L%d", rotulo_principal);
+    }
+
+    while (strcmp(obter_texto_lookahead(), "procedimento") == 0 || strcmp(obter_texto_lookahead(), "funcao") == 0) {
         if (strcmp(obter_texto_lookahead(), "procedimento") == 0) {
             match_keyword("procedimento");
             const char *nome_procedimento = obter_texto_lookahead();
@@ -1457,12 +1487,16 @@ void parse_programa() {
             match(TOKEN_ID, "Nome do Procedimento");
             verificar_declaracao_unica(nome_procedimento, linha_procedimento);
             inserir_rotina(nome_procedimento, 0);
+            rotina_atual->rotulo = proximo_rotulo();
+            emitir("L%d: NADA", rotina_atual->rotulo);
+            emitir("ENPR 1");
             if (strcmp(obter_texto_lookahead(), "(") == 0) {
                 parse_parametros();
             }
             match_keyword("inicio");
             parse_comandos();
             match_keyword("fimprocedimento");
+            emitir("RTPR 1,0");
             rotina_atual = NULL; // saiu do corpo do procedimento
         } else {
             match_keyword("funcao");
@@ -1471,6 +1505,9 @@ void parse_programa() {
             match(TOKEN_ID, "Nome da Funcao");
             verificar_declaracao_unica(nome_funcao, linha_funcao);
             inserir_rotina(nome_funcao, 1);
+            rotina_atual->rotulo = proximo_rotulo();
+            emitir("L%d: NADA", rotina_atual->rotulo);
+            emitir("ENPR 1");
             if (strcmp(obter_texto_lookahead(), "(") == 0) {
                 parse_parametros();
             }
@@ -1480,8 +1517,13 @@ void parse_programa() {
             match_keyword("inicio");
             parse_comandos();
             match_keyword("fimfuncao");
+            emitir("RTPR 1,0");
             rotina_atual = NULL; // saiu do corpo da funcao
         }
+    }
+
+    if (rotulo_principal != 0) {
+        emitir("L%d: NADA", rotulo_principal);
     }
 
     parse_secao_var();
