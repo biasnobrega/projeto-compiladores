@@ -712,6 +712,51 @@ const char *texto_operador() {
     return obter_texto_lookahead();
 }
 
+// ===========================================================
+// FASE 2: VERIFICACAO DAS CHAMADAS DE ROTINA
+// ===========================================================
+// confere se a chamada tem a mesma quantidade de argumentos que a rotina tem de parametros
+void verificar_quantidade_argumentos(TRotina *rotina, int qtd_argumentos, int linha) {
+    if (qtd_argumentos != rotina->qtd_parametros) {
+        char mensagem[100];
+        snprintf(mensagem, sizeof(mensagem),
+                 "numero de argumentos incorreto (esperado %d, recebido %d) na chamada de",
+                 rotina->qtd_parametros, qtd_argumentos);
+        erro_semantico(linha, mensagem, rotina->ID);
+    }
+}
+
+// le os argumentos "( expr, expr, ... )" de uma chamada e confere cada um com o parametro
+// da mesma posicao: o tipo tem que ser igual (inteiro tambem pode ir para parametro real).
+// no fim confere a quantidade de argumentos
+void parse_argumentos(TRotina *rotina, int linha) {
+    int qtd_argumentos = 0;
+    match_keyword("(");
+    while (1) {
+        int linha_argumento = lookahead.line;
+        const char *tipo_argumento = parse_expressao();
+        if (qtd_argumentos < rotina->qtd_parametros) {
+            const char *tipo_parametro = rotina->tipos_parametros[qtd_argumentos];
+            int compativel = strcmp(tipo_parametro, tipo_argumento) == 0 ||
+                             (strcmp(tipo_parametro, "real") == 0 && strcmp(tipo_argumento, "int") == 0);
+            if (!compativel) {
+                char mensagem[100];
+                snprintf(mensagem, sizeof(mensagem),
+                         "argumento %d incompativel (esperado %s, recebido %s) na chamada de",
+                         qtd_argumentos + 1, tipo_parametro, tipo_argumento);
+                erro_semantico(linha_argumento, mensagem, rotina->ID);
+            }
+        }
+        qtd_argumentos++;
+        if (strcmp(obter_texto_lookahead(), ",") != 0) {
+            break;
+        }
+        match_keyword(",");
+    }
+    match_keyword(")");
+    verificar_quantidade_argumentos(rotina, qtd_argumentos, linha);
+}
+
 // Fator: sinal + ou -, numero, string, identificador (com indice ou chamada), ( expressao ), verdadeiro ou falso.
 // Devolve o tipo do fator.
 const char *parse_fator() {
@@ -743,7 +788,20 @@ const char *parse_fator() {
         const char *nome = obter_texto_lookahead();
         int linha = lookahead.line;
         nextToken();
-        if (strcmp(obter_texto_lookahead(), "(") != 0) {
+        if (strcmp(obter_texto_lookahead(), "(") == 0 || procurar_rotina(nome) != NULL) {
+            // chamada de rotina dentro de expressao (com parenteses, ou sem eles se a
+            // rotina nao tiver parametros). so funcao pode estar aqui, porque devolve valor
+            TRotina *rotina = busca_rotina(nome, linha);
+            if (!rotina->eh_funcao) {
+                erro_semantico(linha, "procedimento nao pode ser usado em expressao:", nome);
+            }
+            if (strcmp(obter_texto_lookahead(), "(") == 0) {
+                parse_argumentos(rotina, linha);
+            } else {
+                verificar_quantidade_argumentos(rotina, 0, linha);
+            }
+            tipo = rotina->tipo_retorno;
+        } else {
             // uso de variavel: precisa estar declarada, e o tipo vem da minitabela
             busca_tabela_simbolos(nome, linha);
             tipo = procurar_variavel(nome)->tipo;
@@ -759,17 +817,6 @@ const char *parse_fator() {
                     erro_semantico(linha_indice, mensagem, nome);
                 }
             }
-        } else {
-            // chamada de rotina: precisa estar declarada, e o tipo e o retorno dela
-            TRotina *rotina = busca_rotina(nome, linha);
-            tipo = rotina->tipo_retorno;
-            match_keyword("(");
-            parse_expressao();
-            while (strcmp(obter_texto_lookahead(), ",") == 0) {
-                match_keyword(",");
-                parse_expressao();
-            }
-            match_keyword(")");
         }
     } else if (strcmp(obter_texto_lookahead(), "(") == 0) {
         match_keyword("(");
@@ -928,18 +975,8 @@ void parse_comando_id() {
     int linha = lookahead.line;
     match(TOKEN_ID, "Identificador");
 
-    if (strcmp(obter_texto_lookahead(), "(") == 0) {
-        // chamada de rotina com argumentos: a rotina precisa estar declarada
-        busca_rotina(nome, linha);
-        match_keyword("(");
-        parse_expressao();
-        while (strcmp(obter_texto_lookahead(), ",") == 0) {
-            match_keyword(",");
-            parse_expressao();
-        }
-        match_keyword(")");
-    } else if (strcmp(obter_texto_lookahead(), "[") == 0 ||
-               strcmp(obter_texto_lookahead(), "<-") == 0) {
+    if (strcmp(obter_texto_lookahead(), "[") == 0 ||
+        strcmp(obter_texto_lookahead(), "<-") == 0) {
         // atribuicao: a variavel que recebe o valor precisa estar declarada
         busca_tabela_simbolos(nome, linha);
         const char *tipo_variavel = procurar_variavel(nome)->tipo;
@@ -955,8 +992,18 @@ void parse_comando_id() {
         const char *tipo_valor = parse_expressao();
         verificar_atribuicao(tipo_variavel, tipo_valor, nome, linha_atribuicao);
     } else {
-        // nome sozinho: chamada de procedimento sem argumentos
-        busca_rotina(nome, linha);
+        // chamada de rotina como comando: precisa estar declarada e tem que ser
+        // procedimento (funcao devolve valor, entao so pode aparecer em expressao)
+        TRotina *rotina = busca_rotina(nome, linha);
+        if (rotina->eh_funcao) {
+            erro_semantico(linha, "funcao nao pode ser usada como procedimento:", nome);
+        }
+        if (strcmp(obter_texto_lookahead(), "(") == 0) {
+            parse_argumentos(rotina, linha);
+        } else {
+            // nome sozinho: chamada sem argumentos
+            verificar_quantidade_argumentos(rotina, 0, linha);
+        }
     }
 }
 // Um comando: escreva/escreval, leia, se, enquanto, para, retorne, atribuicao ou chamada.
@@ -1038,9 +1085,24 @@ void parse_comando() {
         parse_comandos();
         match_keyword("fimpara");
     }
-    else if (strcmp(texto_atual, "retorne") == 0) {
+        else if (strcmp(texto_atual, "retorne") == 0) {
+        int linha_retorno = lookahead.line;
         match_keyword("retorne");
-        parse_expressao();
+        const char *tipo_valor = parse_expressao();
+        // retorne so existe dentro de funcao (rotina_atual aponta para a rotina cujo corpo
+        // esta sendo lido; fora das rotinas ela e NULL)
+        if (rotina_atual == NULL || !rotina_atual->eh_funcao) {
+            erro_semantico(linha_retorno, "comando usado fora de uma funcao:", "retorne");
+        }
+        // o valor retornado tem que combinar com o tipo declarado da funcao
+        int compativel = strcmp(rotina_atual->tipo_retorno, tipo_valor) == 0 ||
+                         (strcmp(rotina_atual->tipo_retorno, "real") == 0 && strcmp(tipo_valor, "int") == 0);
+        if (!compativel) {
+            char mensagem[100];
+            snprintf(mensagem, sizeof(mensagem), "retorno incompativel (funcao %s, valor %s) em",
+                     rotina_atual->tipo_retorno, tipo_valor);
+            erro_semantico(linha_retorno, mensagem, rotina_atual->ID);
+        }
     }
     else if (eh_identificador()) {
         parse_comando_id();
@@ -1166,6 +1228,7 @@ void parse_programa() {
             match_keyword("inicio");
             parse_comandos();
             match_keyword("fimprocedimento");
+            rotina_atual = NULL; // saiu do corpo do procedimento
         } else {
             match_keyword("funcao");
             const char *nome_funcao = obter_texto_lookahead();
@@ -1182,6 +1245,7 @@ void parse_programa() {
             match_keyword("inicio");
             parse_comandos();
             match_keyword("fimfuncao");
+            rotina_atual = NULL; // saiu do corpo da funcao
         }
     }
 
