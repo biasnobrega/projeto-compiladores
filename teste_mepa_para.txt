@@ -1,0 +1,16 @@
+algoritmo "Para"
+var
+  i, s, n, a: inteiro
+inicio
+  leia(n)
+  leia(a)
+  para s de 1 ate n faca
+    a <- a + 3 * s
+  fimpara
+  para i de 10 ate 0 passo -2 faca
+    escreval(i)
+  fimpara
+  para i de 1 ate n passo 3 faca
+    escreval(i * a)
+  fimpara
+fimalgoritmo

@@ -439,6 +439,23 @@ int proximo_rotulo(void) {
     return ultimo_rotulo;
 }
 
+// tira do codigo MEPA as instrucoes geradas a partir da posicao 'inicio' e copia para
+// 'destino'. usado no para: o codigo do passo e gerado antes do bloco, mas tem que ser
+// emitido depois dele. devolve quantas instrucoes foram recortadas
+#define MAX_CODIGO_RECORTADO 50
+int recortar_codigo(int inicio, char destino[][TAM_INSTRUCAO]) {
+    int quantidade = total_instrucoes - inicio;
+    if (quantidade > MAX_CODIGO_RECORTADO) {
+        printf("Erro: expressao do passo muito grande (mais de %d instrucoes)\n", MAX_CODIGO_RECORTADO);
+        exit(1);
+    }
+    for (int i = 0; i < quantidade; i++) {
+        snprintf(destino[i], TAM_INSTRUCAO, "%s", codigo_mepa[inicio + i]);
+    }
+    total_instrucoes = inicio;
+    return quantidade;
+}
+
 // ===========================================================
 // PARTE 1: ANALISADOR LÉXICO (SCANNER)
 // ===========================================================
@@ -1104,8 +1121,8 @@ void parse_comando_id() {
     if (strcmp(obter_texto_lookahead(), "[") == 0 ||
         strcmp(obter_texto_lookahead(), "<-") == 0) {
         // atribuicao: a variavel que recebe o valor precisa estar declarada
-        marcar_atribuicao(nome, linha);
         busca_tabela_simbolos(nome, linha);
+        marcar_atribuicao(nome, linha);
         const char *tipo_variavel = procurar_variavel(nome)->tipo;
         if (strcmp(obter_texto_lookahead(), "[") == 0) {
             match_keyword("[");
@@ -1226,7 +1243,23 @@ void parse_comando() {
         emitir("DSVS L%d", rotulo_inicio);
         emitir("L%d: NADA", rotulo_fim);
     }
-    else if (strcmp(texto_atual, "para") == 0) {
+        else if (strcmp(texto_atual, "para") == 0) {
+        // MEPA (modelo do slide):     valor inicial
+        //                             ARMZ v
+        //                             L1: NADA
+        //                             CRVL v
+        //                             valor final
+        //                             CMEG         (CMAG se o passo for negativo)
+        //                             DSVF L2      se passou do final, sai do laco
+        //                             bloco
+        //                             CRVL v
+        //                             passo        (CRCT 1 se nao tiver passo)
+        //                             SOMA
+        //                             ARMZ v       incrementa a variavel de controle
+        //                             DSVS L1
+        //                             L2: NADA
+        int rotulo_inicio = proximo_rotulo();
+        int rotulo_fim = proximo_rotulo();
         match_keyword("para");
         const char *nome_controle = obter_texto_lookahead();
         int linha_controle = lookahead.line;
@@ -1242,17 +1275,48 @@ void parse_comando() {
         match_keyword("de");
         int linha_valor = lookahead.line;
         verificar_valor_para(parse_expressao(), "de", linha_valor);
+        emitir("ARMZ %s", nome_controle);
+        emitir("L%d: NADA", rotulo_inicio);
+        emitir("CRVL %s", nome_controle);
         match_keyword("ate");
         linha_valor = lookahead.line;
         verificar_valor_para(parse_expressao(), "ate", linha_valor);
+
+        // o passo aparece ANTES do bloco no fonte, mas o codigo dele vai DEPOIS do bloco.
+        // entao o codigo do passo e gerado, recortado para um vetor local e emitido no fim
+        char codigo_passo[MAX_CODIGO_RECORTADO][TAM_INSTRUCAO];
+        int qtd_passo = 0;
+        int passo_negativo = 0;
         if (strcmp(obter_texto_lookahead(), "passo") == 0) {
             match_keyword("passo");
             linha_valor = lookahead.line;
+            int inicio_passo = total_instrucoes;
             verificar_valor_para(parse_expressao(), "passo", linha_valor);
+            qtd_passo = recortar_codigo(inicio_passo, codigo_passo);
+            // passo negativo constante (ex: passo -2 gera CRCT 2 e INVR): o laco conta para baixo
+            passo_negativo = (qtd_passo == 2 && strncmp(codigo_passo[0], "CRCT", 4) == 0 &&
+                              strcmp(codigo_passo[1], "INVR") == 0);
         }
+        // contando para cima o laco continua enquanto v <= final; para baixo, enquanto v >= final
+        emitir(passo_negativo ? "CMAG" : "CMEG");
+        emitir("DSVF L%d", rotulo_fim);
         match_keyword("faca");
         parse_comandos();
         match_keyword("fimpara");
+
+        // incremento: v <- v + passo
+        emitir("CRVL %s", nome_controle);
+        if (qtd_passo > 0) {
+            for (int i = 0; i < qtd_passo; i++) {
+                emitir("%s", codigo_passo[i]);
+            }
+        } else {
+            emitir("CRCT 1");
+        }
+        emitir("SOMA");
+        emitir("ARMZ %s", nome_controle);
+        emitir("DSVS L%d", rotulo_inicio);
+        emitir("L%d: NADA", rotulo_fim);
     }
         else if (strcmp(texto_atual, "retorne") == 0) {
         int linha_retorno = lookahead.line;
