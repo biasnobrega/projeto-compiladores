@@ -1,0 +1,22 @@
+algoritmo "TextosMod"
+procedimento saudar(texto: caractere)
+inicio
+  se (texto = "oi") entao
+    escreval("recebeu oi", 1)
+  senao
+    escreval("recebeu outro", 0)
+  fimse
+fimprocedimento
+var
+  a, b: inteiro
+  nome: caractere
+inicio
+  leia(a)
+  leia(b)
+  escreval("Resto: ", a MOD b)
+  escreval(a MOD 2 = 0, (a + b) MOD (b - 1))
+  nome <- "oi"
+  saudar(nome)
+  saudar("tchau")
+  escreval(nome <> "oi")
+fimalgoritmo

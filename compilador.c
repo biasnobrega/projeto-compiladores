@@ -402,6 +402,8 @@ void verificar_variaveis_sem_uso(void) {
 #define TAM_INSTRUCAO 64
 char codigo_mepa[MAX_INSTRUCOES][TAM_INSTRUCAO];
 int total_instrucoes = 0;
+// 1 se o codigo usou as posicoes auxiliares _aux1 e _aux2 (usadas no MOD)
+int usou_auxiliares = 0;
 
 // guarda uma instrucao MEPA. funciona como o printf: emitir("CRVL %s", nome)
 void emitir(const char *formato, ...) {
@@ -424,13 +426,17 @@ void gravar_codigo_mepa(const char *nome_arquivo) {
         printf("Erro: nao foi possivel criar o arquivo %s\n", nome_arquivo);
         return;
     }
-        // cada funcao tambem precisa de uma posicao de memoria, com o nome dela, para
+    // cada funcao tambem precisa de uma posicao de memoria, com o nome dela, para
     // guardar o valor de retorno
     int total_posicoes = proximo_endereco;
     for (TRotina *atual = tabela_rotinas; atual != NULL; atual = atual->prox) {
         if (atual->eh_funcao) {
             total_posicoes++;
         }
+    }
+    // mais duas posicoes para as auxiliares _aux1 e _aux2, se foram usadas
+    if (usou_auxiliares) {
+        total_posicoes += 2;
     }
     fprintf(arquivo_mepa, "INPP\n");
     if (total_posicoes > 0) {
@@ -482,6 +488,23 @@ void gerar_chamada(TRotina *rotina) {
     if (rotina->eh_funcao) {
         emitir("CRVL %s", rotina->ID);
     }
+}
+
+// MEPA do MOD (resto da divisao). a MEPA nao tem instrucao de resto, entao usamos
+// a MOD b = a - (a DIV b) * b. os dois valores ja estao na pilha (a embaixo, b no topo),
+// mas cada um e usado duas vezes: por isso sao guardados nas auxiliares _aux1 e _aux2.
+// os nomes comecam com _ para nunca coincidir com uma variavel do programa
+void gerar_mod(void) {
+    usou_auxiliares = 1;
+    emitir("ARMZ _aux2");   // b
+    emitir("ARMZ _aux1");   // a
+    emitir("CRVL _aux1");   // a
+    emitir("CRVL _aux1");
+    emitir("CRVL _aux2");
+    emitir("DIVI");         // a DIV b
+    emitir("CRVL _aux2");
+    emitir("MULT");         // (a DIV b) * b
+    emitir("SUBT");         // a - (a DIV b) * b
 }
 
 // ===========================================================
@@ -924,6 +947,10 @@ const char *parse_fator() {
         nextToken();
         tipo = "real";
     } else if (eh_string()) {
+        // MEPA so trabalha com numeros. cada texto diferente vira um numero proprio (a
+        // posicao dele na tabela de simbolos), assim textos podem ser guardados em
+        // variaveis, passados para rotinas e comparados com = e <>
+        emitir("CRCT %d", lookahead.attribute.table_index);
         nextToken();
         tipo = "char";
     } else if (eh_identificador()) {
@@ -1000,6 +1027,8 @@ const char *parse_termo() {
             tipo = "int";
             if (strcmp(operador, "\\") == 0) {
                 emitir("DIVI");
+            } else {
+                gerar_mod();
             }
         } else {
             if (!eh_numerico(tipo) || !eh_numerico(tipo_direita)) {
@@ -1190,15 +1219,19 @@ void parse_comando() {
         nextToken();
         match_keyword("(");
         // MEPA: cada valor e calculado no topo da pilha e impresso com IMPR.
-        // textos (caractere) nao tem instrucao na MEPA, entao nao geram IMPR
-        if (strcmp(parse_expressao(), "char") != 0) {
-            emitir("IMPR");
-        }
-        while (strcmp(obter_texto_lookahead(), ",") == 0) {
-            match_keyword(",");
-            if (strcmp(parse_expressao(), "char") != 0) {
+        // o IMPR so imprime numeros: um texto (caractere) apareceria como o numero que o
+        // representa, entao o codigo de valores do tipo caractere e descartado
+        while (1) {
+            int inicio_valor = total_instrucoes;
+            if (strcmp(parse_expressao(), "char") == 0) {
+                total_instrucoes = inicio_valor;
+            } else {
                 emitir("IMPR");
             }
+            if (strcmp(obter_texto_lookahead(), ",") != 0) {
+                break;
+            }
+            match_keyword(",");
         }
         match_keyword(")");
     }
