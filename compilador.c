@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdarg.h>
 
 // ===========================================================
 // ESTRUTURAS DE DADOS (Baseado rigorosamente no PDF)
@@ -384,6 +385,49 @@ void verificar_variaveis_sem_uso(void) {
             erro_semantico(linha_atribuicao[endereco], "variavel recebe valor mas nunca e usada:", atual->ID);
         }
     }
+}
+
+// ===========================================================
+// FASE 2: GERACAO DE CODIGO INTERMEDIARIO (MEPA)
+// ===========================================================
+// o parser gera as instrucoes enquanto le o programa. elas ficam guardadas aqui e so
+// sao gravadas no arquivo no final, se a compilacao terminar sem erros. assim o
+// INPP e o AMEM (que depende do total de variaveis) podem ficar no inicio do arquivo.
+#define MAX_INSTRUCOES 5000
+#define TAM_INSTRUCAO 64
+char codigo_mepa[MAX_INSTRUCOES][TAM_INSTRUCAO];
+int total_instrucoes = 0;
+
+// guarda uma instrucao MEPA. funciona como o printf: emitir("CRVL %s", nome)
+void emitir(const char *formato, ...) {
+    if (total_instrucoes >= MAX_INSTRUCOES) {
+        printf("Erro: codigo MEPA muito grande (mais de %d instrucoes)\n", MAX_INSTRUCOES);
+        exit(1);
+    }
+    va_list argumentos;
+    va_start(argumentos, formato);
+    vsnprintf(codigo_mepa[total_instrucoes], TAM_INSTRUCAO, formato, argumentos);
+    va_end(argumentos);
+    total_instrucoes++;
+}
+
+// grava o arquivo TXT com o programa MEPA completo:
+// INPP (inicia), AMEM (reserva uma posicao para cada variavel), o codigo e PARA (finaliza)
+void gravar_codigo_mepa(const char *nome_arquivo) {
+    FILE *arquivo_mepa = fopen(nome_arquivo, "w");
+    if (arquivo_mepa == NULL) {
+        printf("Erro: nao foi possivel criar o arquivo %s\n", nome_arquivo);
+        return;
+    }
+    fprintf(arquivo_mepa, "INPP\n");
+    if (proximo_endereco > 0) {
+        fprintf(arquivo_mepa, "AMEM %d\n", proximo_endereco);
+    }
+    for (int i = 0; i < total_instrucoes; i++) {
+        fprintf(arquivo_mepa, "%s\n", codigo_mepa[i]);
+    }
+    fprintf(arquivo_mepa, "PARA\n");
+    fclose(arquivo_mepa);
 }
 
 // ===========================================================
@@ -796,7 +840,7 @@ void parse_argumentos(TRotina *rotina, int linha) {
 }
 
 // Fator: sinal + ou -, numero, string, identificador (com indice ou chamada), ( expressao ), verdadeiro ou falso.
-// Devolve o tipo do fator.
+// Devolve o tipo do fator e gera o codigo MEPA que coloca o valor do fator no topo da pilha.
 const char *parse_fator() {
     if (strcmp(obter_texto_lookahead(), "-") == 0 || strcmp(obter_texto_lookahead(), "+") == 0) {
         const char *sinal = obter_texto_lookahead();
@@ -809,14 +853,20 @@ const char *parse_fator() {
             snprintf(mensagem, sizeof(mensagem), "sinal usado com tipo nao numerico (%s) no operador", tipo);
             erro_semantico(linha, mensagem, sinal);
         }
+        // MEPA: o menos inverte o sinal do valor que esta no topo; o mais nao muda nada
+        if (strcmp(sinal, "-") == 0) {
+            emitir("INVR");
+        }
         return tipo;
     }
 
     const char *tipo = "int";
     if (lookahead.type == TOKEN_NUM_INT) {
+        emitir("CRCT %d", lookahead.attribute.int_value);
         nextToken();
         tipo = "int";
     } else if (lookahead.type == TOKEN_NUM_FLOAT) {
+        emitir("CRCT %g", lookahead.attribute.float_value);
         nextToken();
         tipo = "real";
     } else if (eh_string()) {
@@ -841,8 +891,8 @@ const char *parse_fator() {
             tipo = rotina->tipo_retorno;
         } else {
             // uso de variavel: precisa estar declarada, e o tipo vem da minitabela
-            marcar_uso(nome);
             busca_tabela_simbolos(nome, linha);
+            marcar_uso(nome);
             tipo = procurar_variavel(nome)->tipo;
             if (strcmp(obter_texto_lookahead(), "[") == 0) {
                 match_keyword("[");
@@ -855,6 +905,9 @@ const char *parse_fator() {
                     snprintf(mensagem, sizeof(mensagem), "indice de vetor nao inteiro (%s) em", tipo_indice);
                     erro_semantico(linha_indice, mensagem, nome);
                 }
+            } else {
+                // MEPA: carrega o valor da variavel (referenciada pelo nome) no topo da pilha
+                emitir("CRVL %s", nome);
             }
         }
     } else if (strcmp(obter_texto_lookahead(), "(") == 0) {
@@ -862,6 +915,8 @@ const char *parse_fator() {
         tipo = parse_expressao();
         match_keyword(")");
     } else if (strcmp(obter_texto_lookahead(), "verdadeiro") == 0 || strcmp(obter_texto_lookahead(), "falso") == 0) {
+        // MEPA: logico e guardado como inteiro (1 = verdadeiro, 0 = falso)
+        emitir("CRCT %d", strcmp(obter_texto_lookahead(), "verdadeiro") == 0 ? 1 : 0);
         nextToken();
         tipo = "bool";
     } else {
@@ -871,6 +926,7 @@ const char *parse_fator() {
 }
 // Termo: Fator seguido de operadores * / barra invertida ou MOD (maior precedencia).
 // * e / aceitam int e real; barra invertida (divisao inteira) e MOD so aceitam int.
+// MEPA: os dois fatores ja estao na pilha (notacao posfixa), entao a operacao vem depois deles.
 const char *parse_termo() {
     const char *tipo = parse_fator();
     while (strcmp(obter_texto_lookahead(), "*") == 0 || 
@@ -887,12 +943,21 @@ const char *parse_termo() {
                 erro_tipos(linha, tipo, tipo_direita, operador);
             }
             tipo = "int";
+            if (strcmp(operador, "\\") == 0) {
+                emitir("DIVI");
+            }
         } else {
             if (!eh_numerico(tipo) || !eh_numerico(tipo_direita)) {
                 erro_tipos(linha, tipo, tipo_direita, operador);
             }
             // int com int da int; se um dos lados for real, o resultado e real
             tipo = (strcmp(tipo, "int") == 0 && strcmp(tipo_direita, "int") == 0) ? "int" : "real";
+            if (strcmp(operador, "*") == 0) {
+                emitir("MULT");
+            } else {
+                // divisao: inteira (DIVI) entre inteiros, real (DIVF) se tiver real
+                emitir(strcmp(tipo, "int") == 0 ? "DIVI" : "DIVF");
+            }
         }
     }
     return tipo;
@@ -909,6 +974,7 @@ const char *parse_soma() {
 
         if (eh_numerico(tipo) && eh_numerico(tipo_direita)) {
             tipo = (strcmp(tipo, "int") == 0 && strcmp(tipo_direita, "int") == 0) ? "int" : "real";
+            emitir(strcmp(operador, "+") == 0 ? "SOMA" : "SUBT");
         } else if (strcmp(operador, "+") == 0 && strcmp(tipo, "char") == 0 &&
                    strcmp(tipo_direita, "char") == 0) {
             tipo = "char";
@@ -917,6 +983,15 @@ const char *parse_soma() {
         }
     }
     return tipo;
+}
+// devolve a instrucao MEPA de comparacao que corresponde ao operador relacional
+const char *instrucao_comparacao(const char *operador) {
+    if (strcmp(operador, "<") == 0)  return "CMME";
+    if (strcmp(operador, ">") == 0)  return "CMMA";
+    if (strcmp(operador, "=") == 0)  return "CMIG";
+    if (strcmp(operador, "<>") == 0) return "CMDG";
+    if (strcmp(operador, "<=") == 0) return "CMEG";
+    return "CMAG"; // >=
 }
 // Relacional: Soma comparada com outra Soma (< <= = > >= <>). O resultado e logico.
 // So compara numero com numero, ou valores do mesmo tipo.
@@ -931,6 +1006,7 @@ const char *parse_relacional() {
         if (!(eh_numerico(tipo) && eh_numerico(tipo_direita)) && strcmp(tipo, tipo_direita) != 0) {
             erro_tipos(linha, tipo, tipo_direita, operador);
         }
+        emitir("%s", instrucao_comparacao(operador));
         tipo = "bool";
     }
     return tipo;
@@ -945,6 +1021,7 @@ const char *parse_expressao_e() {
         if (strcmp(tipo, "bool") != 0 || strcmp(tipo_direita, "bool") != 0) {
             erro_tipos(linha, tipo, tipo_direita, "E");
         }
+        emitir("CONJ");
         tipo = "bool";
     }
     return tipo;
@@ -960,6 +1037,7 @@ const char *parse_expressao() {
         if (strcmp(tipo, "bool") != 0 || strcmp(tipo_direita, "bool") != 0) {
             erro_tipos(linha, tipo, tipo_direita, "OU");
         }
+        emitir("DISJ");
         tipo = "bool";
     }
     return tipo;
@@ -1031,6 +1109,8 @@ void parse_comando_id() {
         match_keyword("<-");
         const char *tipo_valor = parse_expressao();
         verificar_atribuicao(tipo_variavel, tipo_valor, nome, linha_atribuicao);
+        // MEPA: o valor da expressao esta no topo da pilha; ARMZ guarda ele na variavel
+        emitir("ARMZ %s", nome);
     } else {
         // chamada de rotina como comando: precisa estar declarada e tem que ser
         // procedimento (funcao devolve valor, entao so pode aparecer em expressao)
@@ -1332,7 +1412,9 @@ int main(int argc, char *argv[]) {
         fclose(arquivo);
         return 1;
     }
-
+    // fase 2: apaga o codigo MEPA de uma compilacao anterior (se houver erro agora,
+    // nao fica um arquivo velho que parece ser deste programa)
+    remove("codigo_mepa.txt");
     // a compilacao (analise) comeca aqui no main: le o primeiro caractere do arquivo.
     // c_atual sempre guarda o caractere que o scanner ja leu mas ainda nao usou
     c_atual = fgetc(arquivo);
@@ -1357,6 +1439,9 @@ int main(int argc, char *argv[]) {
     
     // fase 2: so no fim do programa da para saber se uma variavel nunca foi usada
     verificar_variaveis_sem_uso();
+    
+    // fase 2: sem erros, grava o codigo MEPA gerado
+    gravar_codigo_mepa("codigo_mepa.txt");
 
     // Se chegou até aqui sem abortar (exit(1)), está tudo correto
     printf("\nSUCESSO: Analise lexica e sintatica concluidas sem erros!\n");
