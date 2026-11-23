@@ -1130,16 +1130,22 @@ void parse_comando_id() {
 void parse_comando() {
     const char* texto_atual = obter_texto_lookahead();
 
-    if (strcmp(texto_atual, "escreva") == 0 || strcmp(texto_atual, "escreval") == 0) {
+        if (strcmp(texto_atual, "escreva") == 0 || strcmp(texto_atual, "escreval") == 0) {
         nextToken();
         match_keyword("(");
-        parse_expressao();
+        // MEPA: cada valor e calculado no topo da pilha e impresso com IMPR.
+        // textos (caractere) nao tem instrucao na MEPA, entao nao geram IMPR
+        if (strcmp(parse_expressao(), "char") != 0) {
+            emitir("IMPR");
+        }
         while (strcmp(obter_texto_lookahead(), ",") == 0) {
             match_keyword(",");
-            parse_expressao();
+            if (strcmp(parse_expressao(), "char") != 0) {
+                emitir("IMPR");
+            }
         }
         match_keyword(")");
-    } 
+    }
     else if (strcmp(texto_atual, "leia") == 0) {
         match_keyword("leia");
         match_keyword("(");
@@ -1156,6 +1162,9 @@ void parse_comando() {
             verificar_indice(tipo_indice, nome_leitura, linha_indice);
         }
         match_keyword(")");
+        // MEPA: LEIT le o valor digitado para o topo da pilha e ARMZ guarda na variavel
+        emitir("LEIT");
+        emitir("ARMZ %s", nome_leitura);
     }
     else if (strcmp(texto_atual, "se") == 0) {
         match_keyword("se");
