@@ -349,6 +349,44 @@ TRotina *busca_rotina(const char *nome, int linha) {
 }
 
 // ===========================================================
+// FASE 2: VARIAVEIS COM VALOR ATRIBUIDO E NUNCA USADAS
+// ===========================================================
+// a struct TNo do enunciado nao tem campo para isso, entao guardamos em vetores separados.
+// o indice e o ENDERECO da variavel (0, 1, 2, ...), que e unico para cada variavel
+#define MAX_VARIAVEIS 1000
+int variavel_atribuida[MAX_VARIAVEIS];   // 1 se a variavel recebeu valor em algum lugar
+int variavel_usada[MAX_VARIAVEIS];       // 1 se o valor da variavel foi lido em algum lugar
+int linha_atribuicao[MAX_VARIAVEIS];     // linha da primeira vez que recebeu valor
+
+// marca que a variavel recebeu valor (<-, leia, para ou parametro)
+void marcar_atribuicao(const char *nome, int linha) {
+    int endereco = procurar_variavel(nome)->endereco;
+    if (endereco < MAX_VARIAVEIS && !variavel_atribuida[endereco]) {
+        variavel_atribuida[endereco] = 1;
+        linha_atribuicao[endereco] = linha;
+    }
+}
+
+// marca que o valor da variavel foi lido (aparece numa expressao ou controla um para)
+void marcar_uso(const char *nome) {
+    int endereco = procurar_variavel(nome)->endereco;
+    if (endereco < MAX_VARIAVEIS) {
+        variavel_usada[endereco] = 1;
+    }
+}
+
+// regra semantica: toda variavel declarada e com valor atribuido deve ser usada.
+// chamada no fim da analise, quando o programa inteiro ja foi lido
+void verificar_variaveis_sem_uso(void) {
+    for (TNo *atual = tabela_variaveis; atual != NULL; atual = atual->prox) {
+        int endereco = atual->endereco;
+        if (endereco < MAX_VARIAVEIS && variavel_atribuida[endereco] && !variavel_usada[endereco]) {
+            erro_semantico(linha_atribuicao[endereco], "variavel recebe valor mas nunca e usada:", atual->ID);
+        }
+    }
+}
+
+// ===========================================================
 // PARTE 1: ANALISADOR LÉXICO (SCANNER)
 // ===========================================================
 // Imprime o token na tela e em saida.txt no formato: linha# NOME | atributo
@@ -803,6 +841,7 @@ const char *parse_fator() {
             tipo = rotina->tipo_retorno;
         } else {
             // uso de variavel: precisa estar declarada, e o tipo vem da minitabela
+            marcar_uso(nome);
             busca_tabela_simbolos(nome, linha);
             tipo = procurar_variavel(nome)->tipo;
             if (strcmp(obter_texto_lookahead(), "[") == 0) {
@@ -978,6 +1017,7 @@ void parse_comando_id() {
     if (strcmp(obter_texto_lookahead(), "[") == 0 ||
         strcmp(obter_texto_lookahead(), "<-") == 0) {
         // atribuicao: a variavel que recebe o valor precisa estar declarada
+        marcar_atribuicao(nome, linha);
         busca_tabela_simbolos(nome, linha);
         const char *tipo_variavel = procurar_variavel(nome)->tipo;
         if (strcmp(obter_texto_lookahead(), "[") == 0) {
@@ -1027,6 +1067,7 @@ void parse_comando() {
         int linha_leitura = lookahead.line;
         match(TOKEN_ID, "Variavel para leitura");
         busca_tabela_simbolos(nome_leitura, linha_leitura);
+        marcar_atribuicao(nome_leitura, linha_leitura);
         if (strcmp(obter_texto_lookahead(), "[") == 0) {
             match_keyword("[");
             int linha_indice = lookahead.line;
@@ -1066,6 +1107,9 @@ void parse_comando() {
         int linha_controle = lookahead.line;
         match(TOKEN_ID, "Variavel de controle do para");
         busca_tabela_simbolos(nome_controle, linha_controle);
+        // o para da valor a variavel de controle e tambem le esse valor para comparar
+        marcar_atribuicao(nome_controle, linha_controle);
+        marcar_uso(nome_controle);
         // a variavel de controle conta de um em um (ou de passo em passo): tem que ser inteira
         if (strcmp(procurar_variavel(nome_controle)->tipo, "int") != 0) {
             erro_semantico(linha_controle, "variavel de controle do para nao e inteira:", nome_controle);
@@ -1193,6 +1237,8 @@ void parse_parametro() {
     verificar_declaracao_unica(nome, linha);
     inserir_variavel(nome, tipo);
     adicionar_parametro_rotina(tipo);
+    // o parametro recebe valor na chamada da rotina
+    marcar_atribuicao(nome, linha);
 }
 // Lista de parametros entre parenteses: nome : tipo, nome : tipo
 void parse_parametros() {
@@ -1308,6 +1354,9 @@ int main(int argc, char *argv[]) {
     // dispara a validacao sintatica a partir da raiz da gramatica (regra Programa).
     // dai pra frente o parser vai chamando nextToken, que chama o scanner token por token
     parse_programa();
+    
+    // fase 2: so no fim do programa da para saber se uma variavel nunca foi usada
+    verificar_variaveis_sem_uso();
 
     // Se chegou até aqui sem abortar (exit(1)), está tudo correto
     printf("\nSUCESSO: Analise lexica e sintatica concluidas sem erros!\n");
