@@ -1,0 +1,28 @@
+algoritmo "SeEnquanto"
+var
+  a, b, s, n: inteiro
+  p, q: logico
+inicio
+  leia(a)
+  leia(b)
+  leia(p)
+  leia(q)
+  se (a > b) entao
+    q <- p E q
+  senao
+    se (a < 2 * b) entao
+      p <- verdadeiro
+    senao
+      q <- falso
+    fimse
+  fimse
+  s <- 1
+  n <- 10
+  enquanto (s <= n) faca
+    s <- a + 3 * s
+  fimenquanto
+  se (p) entao
+    escreval(s)
+  fimse
+  escreval(q)
+fimalgoritmo

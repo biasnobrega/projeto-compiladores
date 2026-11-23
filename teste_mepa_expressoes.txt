@@ -1,0 +1,14 @@
+algoritmo "Expressoes"
+var
+  a, b, c: inteiro
+  x: real
+  ok: logico
+inicio
+  a <- 10
+  b <- 18
+  c <- 2
+  a <- a + (b / 9 - 3) * c
+  x <- a / 4.0
+  ok <- a > b E -c < 0 OU x >= 2.5
+  ok <- ok E verdadeiro
+fimalgoritmo

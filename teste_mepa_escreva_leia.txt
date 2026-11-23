@@ -1,0 +1,11 @@
+algoritmo "EntradaSaida"
+var
+  a, b: inteiro
+  ok: logico
+inicio
+  leia(a)
+  leia(b)
+  ok <- a > b
+  escreva("Soma: ", a + b)
+  escreval(a * 2, ok)
+fimalgoritmo

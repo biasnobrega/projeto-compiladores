@@ -1,0 +1,13 @@
+algoritmo "R"
+procedimento limpar
+inicio
+fimprocedimento
+funcao media(x: real, y: real, z: real): real
+inicio
+  retorne (x + y + z) / 3
+fimfuncao
+var
+  ok: logico
+inicio
+  ok <- verdadeiro
+fimalgoritmo

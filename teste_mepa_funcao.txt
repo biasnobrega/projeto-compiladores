@@ -1,0 +1,28 @@
+algoritmo "Funcoes"
+funcao dobro(valor: inteiro): inteiro
+inicio
+  retorne valor * 2
+fimfuncao
+funcao maior(x: inteiro, y: inteiro): inteiro
+inicio
+  se (x > y) entao
+    retorne x
+  fimse
+  retorne y
+fimfuncao
+funcao fat(n: inteiro): inteiro
+inicio
+  se (n <= 1) entao
+    retorne 1
+  fimse
+  retorne n * fat(n - 1)
+fimfuncao
+var
+  a, b: inteiro
+inicio
+  leia(a)
+  leia(b)
+  escreval(dobro(a) + dobro(b))
+  escreval(maior(a, b))
+  escreval(fat(5))
+fimalgoritmo

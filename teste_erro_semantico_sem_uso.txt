@@ -1,0 +1,8 @@
+algoritmo "SemUso"
+var
+  a, b, c: inteiro
+inicio
+  a <- 10
+  b <- a * 2
+  escreval(a)
+fimalgoritmo

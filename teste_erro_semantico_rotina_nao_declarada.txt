@@ -1,0 +1,6 @@
+algoritmo "RotNaoDecl"
+var
+  r: inteiro
+inicio
+  r <- dobro(4)
+fimalgoritmo

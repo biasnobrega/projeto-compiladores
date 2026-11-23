@@ -1,0 +1,19 @@
+algoritmo "Chamadas"
+procedimento mostrar(texto: caractere, n: inteiro)
+inicio
+  escreval(texto, n)
+fimprocedimento
+funcao dobro(valor: real): real
+inicio
+  retorne valor * 2
+fimfuncao
+funcao zero: inteiro
+inicio
+  retorne 0
+fimfuncao
+var
+  x: real
+  k: inteiro
+inicio
+  mostrar("ok")
+fimalgoritmo
