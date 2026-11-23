@@ -203,7 +203,8 @@ typedef struct _TRotina {
     int qtd_parametros;
     char tipos_parametros[MAX_PARAMETROS][7];  // tipo de cada parametro, na ordem
     char nomes_parametros[MAX_PARAMETROS][16]; // nome de cada parametro (para o codigo MEPA)
-    int rotulo;                                // rotulo MEPA onde a rotina comeca
+    int rotulo;
+    int rotulo_fim;                            // rotulo MEPA do fim da funcao (usado pelo retorne)                                // rotulo MEPA onde a rotina comeca
     struct _TRotina *prox;
 } TRotina;
 
@@ -423,9 +424,17 @@ void gravar_codigo_mepa(const char *nome_arquivo) {
         printf("Erro: nao foi possivel criar o arquivo %s\n", nome_arquivo);
         return;
     }
+        // cada funcao tambem precisa de uma posicao de memoria, com o nome dela, para
+    // guardar o valor de retorno
+    int total_posicoes = proximo_endereco;
+    for (TRotina *atual = tabela_rotinas; atual != NULL; atual = atual->prox) {
+        if (atual->eh_funcao) {
+            total_posicoes++;
+        }
+    }
     fprintf(arquivo_mepa, "INPP\n");
-    if (proximo_endereco > 0) {
-        fprintf(arquivo_mepa, "AMEM %d\n", proximo_endereco);
+    if (total_posicoes > 0) {
+        fprintf(arquivo_mepa, "AMEM %d\n", total_posicoes);
     }
     for (int i = 0; i < total_instrucoes; i++) {
         fprintf(arquivo_mepa, "%s\n", codigo_mepa[i]);
@@ -468,6 +477,11 @@ void gerar_chamada(TRotina *rotina) {
         emitir("ARMZ %s", rotina->nomes_parametros[i]);
     }
     emitir("CHPR L%d", rotina->rotulo);
+    // funcao: o retorne guardou o resultado na posicao com o nome da funcao;
+    // ele e carregado no topo da pilha para ser usado na expressao
+    if (rotina->eh_funcao) {
+        emitir("CRVL %s", rotina->ID);
+    }
 }
 
 // ===========================================================
@@ -928,6 +942,7 @@ const char *parse_fator() {
             } else {
                 verificar_quantidade_argumentos(rotina, 0, linha);
             }
+            gerar_chamada(rotina);
             tipo = rotina->tipo_retorno;
         } else {
             // uso de variavel: precisa estar declarada, e o tipo vem da minitabela
@@ -1351,6 +1366,9 @@ void parse_comando() {
                      rotina_atual->tipo_retorno, tipo_valor);
             erro_semantico(linha_retorno, mensagem, rotina_atual->ID);
         }
+        // MEPA: guarda o valor na posicao com o nome da funcao e pula para o fim dela
+        emitir("ARMZ %s", rotina_atual->ID);
+        emitir("DSVS L%d", rotina_atual->rotulo_fim);
     }
     else if (eh_identificador()) {
         parse_comando_id();
@@ -1506,6 +1524,7 @@ void parse_programa() {
             verificar_declaracao_unica(nome_funcao, linha_funcao);
             inserir_rotina(nome_funcao, 1);
             rotina_atual->rotulo = proximo_rotulo();
+            rotina_atual->rotulo_fim = proximo_rotulo();
             emitir("L%d: NADA", rotina_atual->rotulo);
             emitir("ENPR 1");
             if (strcmp(obter_texto_lookahead(), "(") == 0) {
@@ -1517,6 +1536,7 @@ void parse_programa() {
             match_keyword("inicio");
             parse_comandos();
             match_keyword("fimfuncao");
+            emitir("L%d: NADA", rotina_atual->rotulo_fim); // o retorne desvia para ca
             emitir("RTPR 1,0");
             rotina_atual = NULL; // saiu do corpo da funcao
         }
