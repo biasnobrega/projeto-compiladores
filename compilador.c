@@ -1,6 +1,8 @@
 /*
  * ===========================================================
- * COMPILADORES - PROJETO Fase 1: Análise Léxica e Sintática
+ * COMPILADORES - PROJETO
+ *   Fase 1: Análise Léxica e Sintática
+ *   Fase 2: Análise Semântica e Geração de Código Intermediário (MEPA)
  * Linguagem: definida nos exemplos do Anexo 1
  * Implementação em C
  *
@@ -8,8 +10,14 @@
  *   1. Beatriz Silva Nóbrega - 10435789
  *   2. Felipe Marques Leite Martha - 10437877
  *
- * Compilar:  gcc -Wall -Wno-unused-result -g -Og compilador.c -o compilador
- * Executar:  .\compilador.exe teste_ok.txt
+ * Uso de Inteligência Artificial: a ferramenta Claude (Anthropic) foi usada como
+ * apoio na fase 2, sugerindo o código da análise semântica e da geração MEPA, que
+ * foi aplicado e testado pelo grupo etapa por etapa. Detalhes no Readme.txt.
+ *
+ * Compilar:  gcc -g -Og -Wall compilador.c -o compilador
+ * Executar:  ./compilador teste_ok.txt   (no Windows: .\compilador.exe teste_ok.txt)
+ * Saídas:    tokens e mensagens na tela e em saida.txt;
+ *            código MEPA em codigo_mepa.txt (gerado só quando não há erros)
  * ===========================================================
  */
 
@@ -299,7 +307,7 @@ void erro_semantico(int linha, const char *mensagem, const char *nome) {
     liberar_tabela_rotinas();
     fclose(saida);
     fclose(arquivo);
-    exit(1);
+    exit(0);
 }
 
 // procura uma variavel pelo nome na minitabela; devolve o no ou NULL se nao achar
@@ -402,8 +410,13 @@ void verificar_variaveis_sem_uso(void) {
 #define TAM_INSTRUCAO 64
 char codigo_mepa[MAX_INSTRUCOES][TAM_INSTRUCAO];
 int total_instrucoes = 0;
-// 1 se o codigo usou as posicoes auxiliares _aux1 e _aux2 (usadas no MOD)
+// 1 se o codigo usou as posicoes auxiliares _aux1 e _aux2 (usadas no MOD e nos vetores)
 int usou_auxiliares = 0;
+// vetores: indice e o ENDERECO da variavel. eh_vetor = 1 se a variavel e um vetor,
+// e vetor_inicio/vetor_fim sao os limites da declaracao vetor[inicio..fim]
+int eh_vetor[MAX_VARIAVEIS];
+int vetor_inicio[MAX_VARIAVEIS];
+int vetor_fim[MAX_VARIAVEIS];
 
 // guarda uma instrucao MEPA. funciona como o printf: emitir("CRVL %s", nome)
 void emitir(const char *formato, ...) {
@@ -437,6 +450,12 @@ void gravar_codigo_mepa(const char *nome_arquivo) {
     // mais duas posicoes para as auxiliares _aux1 e _aux2, se foram usadas
     if (usou_auxiliares) {
         total_posicoes += 2;
+    }
+    // cada vetor ocupa uma posicao por elemento (a minitabela ja contou uma)
+    for (TNo *atual = tabela_variaveis; atual != NULL; atual = atual->prox) {
+        if (atual->endereco < MAX_VARIAVEIS && eh_vetor[atual->endereco]) {
+            total_posicoes += vetor_fim[atual->endereco] - vetor_inicio[atual->endereco];
+        }
     }
     fprintf(arquivo_mepa, "INPP\n");
     if (total_posicoes > 0) {
@@ -505,6 +524,95 @@ void gerar_mod(void) {
     emitir("CRVL _aux2");
     emitir("MULT");         // (a DIV b) * b
     emitir("SUBT");         // a - (a DIV b) * b
+}
+
+// ===========================================================
+// FASE 2: VETORES NA MEPA
+// ===========================================================
+// a MEPA dos slides nao tem instrucao de acesso por indice. cada elemento do vetor vira
+// uma posicao de memoria com nome proprio: v[1], v[2], v[3]... (o colchete nao existe
+// em identificador, entao esses nomes nunca coincidem com uma variavel do programa)
+
+// guarda os limites de um vetor declarado como vetor[inicio..fim]
+void registrar_vetor(const char *nome, int inicio, int fim) {
+    int endereco = procurar_variavel(nome)->endereco;
+    if (endereco < MAX_VARIAVEIS) {
+        eh_vetor[endereco] = 1;
+        vetor_inicio[endereco] = inicio;
+        vetor_fim[endereco] = fim;
+    }
+}
+
+// regra semantica: vetor so pode ser usado com indice, e variavel comum sem indice
+void verificar_uso_vetor(const char *nome, int tem_indice, int linha) {
+    int endereco = procurar_variavel(nome)->endereco;
+    int vetor = endereco < MAX_VARIAVEIS && eh_vetor[endereco];
+    if (tem_indice && !vetor) {
+        erro_semantico(linha, "variavel nao e vetor:", nome);
+    }
+    if (!tem_indice && vetor) {
+        erro_semantico(linha, "vetor usado sem indice:", nome);
+    }
+}
+
+// confere se o codigo do indice (gerado a partir de 'inicio_indice') e so "CRCT k".
+// se for, o indice e constante: confere se esta dentro dos limites, tira o CRCT do codigo
+// e devolve 1 (com o valor em *indice). se nao for, deixa o codigo e devolve 0
+int indice_constante(const char *nome, int inicio_indice, int linha, int *indice) {
+    if (total_instrucoes - inicio_indice != 1 ||
+        sscanf(codigo_mepa[inicio_indice], "CRCT %d", indice) != 1) {
+        return 0;
+    }
+    int endereco = procurar_variavel(nome)->endereco;
+    if (*indice < vetor_inicio[endereco] || *indice > vetor_fim[endereco]) {
+        erro_semantico(linha, "indice fora dos limites do vetor:", nome);
+    }
+    total_instrucoes = inicio_indice;
+    return 1;
+}
+
+// leitura de v[indice] com indice calculado (o valor do indice esta no topo da pilha).
+// o indice e comparado com cada posicao do vetor; na que for igual, carrega o elemento.
+// se nenhuma for igual (indice fora dos limites), o resultado e 0
+void gerar_leitura_vetor_calculada(const char *nome) {
+    int endereco = procurar_variavel(nome)->endereco;
+    int rotulo_fim = proximo_rotulo();
+    usou_auxiliares = 1;
+    emitir("ARMZ _aux1");
+    for (int k = vetor_inicio[endereco]; k <= vetor_fim[endereco]; k++) {
+        int rotulo_proximo = proximo_rotulo();
+        emitir("CRVL _aux1");
+        emitir("CRCT %d", k);
+        emitir("CMIG");
+        emitir("DSVF L%d", rotulo_proximo);
+        emitir("CRVL %s[%d]", nome, k);
+        emitir("DSVS L%d", rotulo_fim);
+        emitir("L%d: NADA", rotulo_proximo);
+    }
+    emitir("CRCT 0");
+    emitir("L%d: NADA", rotulo_fim);
+}
+
+// escrita em v[indice] com indice calculado (na pilha: o indice embaixo e o valor no topo).
+// mesma ideia da leitura: compara o indice com cada posicao e guarda o valor na que for igual
+void gerar_escrita_vetor_calculada(const char *nome) {
+    int endereco = procurar_variavel(nome)->endereco;
+    int rotulo_fim = proximo_rotulo();
+    usou_auxiliares = 1;
+    emitir("ARMZ _aux2");   // valor
+    emitir("ARMZ _aux1");   // indice
+    for (int k = vetor_inicio[endereco]; k <= vetor_fim[endereco]; k++) {
+        int rotulo_proximo = proximo_rotulo();
+        emitir("CRVL _aux1");
+        emitir("CRCT %d", k);
+        emitir("CMIG");
+        emitir("DSVF L%d", rotulo_proximo);
+        emitir("CRVL _aux2");
+        emitir("ARMZ %s[%d]", nome, k);
+        emitir("DSVS L%d", rotulo_fim);
+        emitir("L%d: NADA", rotulo_proximo);
+    }
+    emitir("L%d: NADA", rotulo_fim);
 }
 
 // ===========================================================
@@ -638,7 +746,7 @@ Token obterToken(void) {
                 fprintf(saida, "ERRO LÉXICO na linha %d: string sem aspas de fechamento ou muito longa: %s\n", linha_atual, lexema);
                 fclose(saida);
                 fclose(arquivo);
-                exit(1);
+                exit(0);
             }
             lexema[pos++] = '"';
             c_atual = fgetc(arquivo);
@@ -767,7 +875,7 @@ Token obterToken(void) {
         fprintf(saida, "ERRO LÉXICO na linha %d: caractere invalido '%c'\n", linha_atual, c_atual);
         fclose(saida);
         fclose(arquivo);
-        exit(1);
+        exit(0);
     }
 }
 
@@ -812,7 +920,7 @@ void erroSintatico(const char *esperado) {
            esperado, obter_texto_lookahead(), lookahead.line);
     fclose(saida);
     fclose(arquivo);
-    exit(1);
+    exit(0);
 }
 // Consome o token atual se for do tipo esperado (identificador, numero...); senao erro sintatico.
 void match(TokenNome tipo_esperado, const char *msg_erro) {
@@ -976,9 +1084,11 @@ const char *parse_fator() {
             busca_tabela_simbolos(nome, linha);
             marcar_uso(nome);
             tipo = procurar_variavel(nome)->tipo;
+            verificar_uso_vetor(nome, strcmp(obter_texto_lookahead(), "[") == 0, linha);
             if (strcmp(obter_texto_lookahead(), "[") == 0) {
                 match_keyword("[");
                 int linha_indice = lookahead.line;
+                int inicio_indice = total_instrucoes;
                 const char *tipo_indice = parse_expressao();
                 match_keyword("]");
                 // o indice do vetor tem que ser inteiro
@@ -986,6 +1096,13 @@ const char *parse_fator() {
                     char mensagem[100];
                     snprintf(mensagem, sizeof(mensagem), "indice de vetor nao inteiro (%s) em", tipo_indice);
                     erro_semantico(linha_indice, mensagem, nome);
+                }
+                // MEPA: indice constante carrega v[k] direto; indice calculado compara posicoes
+                int indice;
+                if (indice_constante(nome, inicio_indice, linha_indice, &indice)) {
+                    emitir("CRVL %s[%d]", nome, indice);
+                } else {
+                    gerar_leitura_vetor_calculada(nome);
                 }
             } else {
                 // MEPA: carrega o valor da variavel (referenciada pelo nome) no topo da pilha
@@ -1182,19 +1299,31 @@ void parse_comando_id() {
         busca_tabela_simbolos(nome, linha);
         marcar_atribuicao(nome, linha);
         const char *tipo_variavel = procurar_variavel(nome)->tipo;
-        if (strcmp(obter_texto_lookahead(), "[") == 0) {
+        int tem_indice = strcmp(obter_texto_lookahead(), "[") == 0;
+        verificar_uso_vetor(nome, tem_indice, linha);
+        int indice_fixo = 0;   // 1 se o indice for constante (valor em 'indice')
+        int indice = 0;
+        if (tem_indice) {
             match_keyword("[");
             int linha_indice = lookahead.line;
+            int inicio_indice = total_instrucoes;
             const char *tipo_indice = parse_expressao();
             match_keyword("]");
             verificar_indice(tipo_indice, nome, linha_indice);
+            indice_fixo = indice_constante(nome, inicio_indice, linha_indice, &indice);
         }
         int linha_atribuicao = lookahead.line;
         match_keyword("<-");
         const char *tipo_valor = parse_expressao();
         verificar_atribuicao(tipo_variavel, tipo_valor, nome, linha_atribuicao);
         // MEPA: o valor da expressao esta no topo da pilha; ARMZ guarda ele na variavel
-        emitir("ARMZ %s", nome);
+        if (!tem_indice) {
+            emitir("ARMZ %s", nome);
+        } else if (indice_fixo) {
+            emitir("ARMZ %s[%d]", nome, indice);
+        } else {
+            gerar_escrita_vetor_calculada(nome);
+        }
     } else {
         // chamada de rotina como comando: precisa estar declarada e tem que ser
         // procedimento (funcao devolve valor, entao so pode aparecer em expressao)
@@ -1241,19 +1370,31 @@ void parse_comando() {
         const char *nome_leitura = obter_texto_lookahead();
         int linha_leitura = lookahead.line;
         match(TOKEN_ID, "Variavel para leitura");
-        busca_tabela_simbolos(nome_leitura, linha_leitura);
+                busca_tabela_simbolos(nome_leitura, linha_leitura);
         marcar_atribuicao(nome_leitura, linha_leitura);
-        if (strcmp(obter_texto_lookahead(), "[") == 0) {
+        int tem_indice = strcmp(obter_texto_lookahead(), "[") == 0;
+        verificar_uso_vetor(nome_leitura, tem_indice, linha_leitura);
+        int indice_fixo = 0;   // 1 se o indice for constante (valor em 'indice')
+        int indice = 0;
+        if (tem_indice) {
             match_keyword("[");
             int linha_indice = lookahead.line;
+            int inicio_indice = total_instrucoes;
             const char *tipo_indice = parse_expressao();
             match_keyword("]");
             verificar_indice(tipo_indice, nome_leitura, linha_indice);
+            indice_fixo = indice_constante(nome_leitura, inicio_indice, linha_indice, &indice);
         }
         match_keyword(")");
         // MEPA: LEIT le o valor digitado para o topo da pilha e ARMZ guarda na variavel
         emitir("LEIT");
-        emitir("ARMZ %s", nome_leitura);
+        if (!tem_indice) {
+            emitir("ARMZ %s", nome_leitura);
+        } else if (indice_fixo) {
+            emitir("ARMZ %s[%d]", nome_leitura, indice);
+        } else {
+            gerar_escrita_vetor_calculada(nome_leitura);
+        }
     }
        else if (strcmp(texto_atual, "se") == 0) {
         // MEPA (modelo do slide):     condicao
@@ -1427,8 +1568,8 @@ void parse_comandos() {
 void parse_secao_var() {
     if (strcmp(obter_texto_lookahead(), "var") == 0) {
         match_keyword("var");
-        
-                    while (eh_identificador()) {
+
+        while (eh_identificador()) {
             // guarda os nomes da linha (ex: "i, resultado") porque o tipo so aparece
             // depois do ':'; quando o tipo for lido, todos sao inseridos na minitabela
             char nomes[50][16];
@@ -1444,23 +1585,37 @@ void parse_secao_var() {
                 match(TOKEN_ID, "Identificador de Variavel");
             }
             match_keyword(":");
-            
+
+            // vetor: guarda os limites [inicio..fim] para a geracao de codigo
+            int declaracao_vetor = 0;
+            int inicio_vetor = 0;
+            int fim_vetor = 0;
             if (strcmp(obter_texto_lookahead(), "vetor") == 0) {
                 match_keyword("vetor");
                 match_keyword("[");
+                int linha_vetor = lookahead.line;
+                inicio_vetor = lookahead.attribute.int_value;
                 match(TOKEN_NUM_INT, "Indice Inicial do Vetor");
                 match_keyword("..");
+                fim_vetor = lookahead.attribute.int_value;
                 match(TOKEN_NUM_INT, "Indice Final do Vetor");
                 match_keyword("]");
                 match_keyword("de");
+                if (fim_vetor < inicio_vetor) {
+                    erro_semantico(linha_vetor, "limite final menor que o inicial no vetor", nomes[0]);
+                }
+                declaracao_vetor = 1;
             }
-            
+
             const char* tipo = obter_texto_lookahead();
             if (strcmp(tipo, "inteiro") == 0 || strcmp(tipo, "real") == 0 || 
                 strcmp(tipo, "caractere") == 0 || strcmp(tipo, "logico") == 0) {
                 for (int k = 0; k < qtd_nomes; k++) {
                     verificar_declaracao_unica(nomes[k], lookahead.line);
                     inserir_variavel(nomes[k], tipo);
+                    if (declaracao_vetor) {
+                        registrar_vetor(nomes[k], inicio_vetor, fim_vetor);
+                    }
                 }
                 nextToken();
             } else {
@@ -1647,9 +1802,11 @@ int main(int argc, char *argv[]) {
     // fase 2: sem erros, grava o codigo MEPA gerado
     gravar_codigo_mepa("codigo_mepa.txt");
 
-    // Se chegou até aqui sem abortar (exit(1)), está tudo correto
-    printf("\nSUCESSO: Analise lexica e sintatica concluidas sem erros!\n");
-    fprintf(saida, "\nSUCESSO: Analise lexica e sintatica concluidas sem erros!\n");
+    // Se chegou ate aqui, nao houve erro lexico, sintatico nem semantico
+    printf("\nSUCESSO: Analise lexica, sintatica e semantica concluidas sem erros!\n");
+    printf("Codigo MEPA gerado em codigo_mepa.txt\n");
+    fprintf(saida, "\nSUCESSO: Analise lexica, sintatica e semantica concluidas sem erros!\n");
+    fprintf(saida, "Codigo MEPA gerado em codigo_mepa.txt\n");
 
     
     // fase 2: mostra a minitabela montada e depois libera a memoria da lista
