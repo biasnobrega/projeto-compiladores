@@ -430,6 +430,15 @@ void gravar_codigo_mepa(const char *nome_arquivo) {
     fclose(arquivo_mepa);
 }
 
+// devolve o proximo rotulo livre: 1, 2, 3, ... (vira L1, L2, L3 no codigo MEPA).
+// como as funcoes do parser sao recursivas (um se dentro de outro se), cada comando
+// pega os seus rotulos ANTES de ler os comandos internos e guarda em variaveis locais
+int proximo_rotulo(void) {
+    static int ultimo_rotulo = 0;
+    ultimo_rotulo++;
+    return ultimo_rotulo;
+}
+
 // ===========================================================
 // PARTE 1: ANALISADOR LÉXICO (SCANNER)
 // ===========================================================
@@ -1166,29 +1175,56 @@ void parse_comando() {
         emitir("LEIT");
         emitir("ARMZ %s", nome_leitura);
     }
-    else if (strcmp(texto_atual, "se") == 0) {
+       else if (strcmp(texto_atual, "se") == 0) {
+        // MEPA (modelo do slide):     condicao
+        //                             DSVF L1      se falso, pula o bloco do entao
+        //                             bloco entao
+        //                             DSVS L2      (so se tiver senao) pula o bloco do senao
+        //                             L1: NADA
+        //                             bloco senao
+        //                             L2: NADA
+        int rotulo_senao = proximo_rotulo();
+        int rotulo_fim = proximo_rotulo();
         match_keyword("se");
         match_keyword("(");
         int linha_condicao = lookahead.line;
         verificar_condicao(parse_expressao(), "se", linha_condicao);
         match_keyword(")");
+        emitir("DSVF L%d", rotulo_senao);
         match_keyword("entao");
         parse_comandos();
         if (strcmp(obter_texto_lookahead(), "senao") == 0) {
+            emitir("DSVS L%d", rotulo_fim);
+            emitir("L%d: NADA", rotulo_senao);
             match_keyword("senao");
             parse_comandos();
+            emitir("L%d: NADA", rotulo_fim);
+        } else {
+            emitir("L%d: NADA", rotulo_senao);
         }
         match_keyword("fimse");
     }
     else if (strcmp(texto_atual, "enquanto") == 0) {
+        // MEPA (modelo do slide):     L1: NADA
+        //                             condicao
+        //                             DSVF L2      se falso, sai do laco
+        //                             bloco
+        //                             DSVS L1      volta para testar de novo
+        //                             L2: NADA
+        int rotulo_inicio = proximo_rotulo();
+        int rotulo_fim = proximo_rotulo();
+        emitir("L%d: NADA", rotulo_inicio);
         match_keyword("enquanto");
         match_keyword("(");
         int linha_condicao = lookahead.line;
         verificar_condicao(parse_expressao(), "enquanto", linha_condicao);
         match_keyword(")");
+        emitir("DSVF L%d", rotulo_fim);
         match_keyword("faca");
         parse_comandos();
         match_keyword("fimenquanto");
+        emitir("DSVS L%d", rotulo_inicio);
+        emitir("L%d: NADA", rotulo_fim);
     }
     else if (strcmp(texto_atual, "para") == 0) {
         match_keyword("para");
